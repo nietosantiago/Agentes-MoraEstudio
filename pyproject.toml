@@ -2,7 +2,7 @@
 name = "mora-agentes"
 version = "0.2.0"
 description = "Sistema multiagente para un estudio de diseño de interiores (TFI): comercial, contenidos, administrativo y proyectos con HITL."
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.15"
 dependencies = [
     "pydantic>=2.7",
     "langgraph>=1.0,<2",
