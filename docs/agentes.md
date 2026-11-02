@@ -1,50 +1,68 @@
-# Fichas de agentes
+# Agentes y tools
 
-Cada agente se define como `modelo + instrucciones + contexto + tools + contrato + límites + trazas` (C12). Los nombres sirven para expresar responsabilidades: no son personas.
+Un agente = instrucciones (frontera + identidad de marca) + **sus** tools + contrato `ResultadoAgente` + límites. Todos leen la misma base y la misma Skill de marca.
 
-## Recepción / Triage (Router) — `agents/triage.py`
-- **Hace**: clasifica la intención (7 clases) y la urgencia, identifica al cliente y al proyecto en el repo, y extrae tipo de proyecto, m² y etapas.
-- **No hace**: responder, ni decidir la identidad del cliente desde el texto del LLM.
-- **Contexto**: solo la solicitud (delimitada como dato no confiable).
-- **Salida**: `Clasificacion`.
+## Router — `agents/router.py`
+- Salida: `DecisionRouter{agente, confianza, justificacion, subpedidos, metodo}`. `subpedidos` (2–3) solo si el pedido mezcla áreas.
+- Modo LLM: prompt con la frontera explícita y ejemplos limítrofes ("¿Cuándo me paga Gómez?" → administrativo; "¿Cuándo entrego los renders de Gómez?" → proyectos).
+- Modo reglas: señales ponderadas por dominio; `confianza = s1 / (s1 + s2 + 0,8)`, así que si dos dominios compiten la confianza baja y se pregunta.
 
-## Supervisor — `agents/supervisor.py`
-- **Hace**: descompone en ≤3 `WorkerTask`, define criterios de éxito y valida el plan (roles conocidos, ids únicos, dependencias sin ciclos, presupuesto).
-- **No hace**: investigar, redactar ni ampliar su propio `RunBudget`.
+## Consolidador — `consolidacion.py`
+No es un agente con LLM: es un nodo determinístico que junta los resultados cuando el router delegó a varios agentes. Arma una respuesta, una acción y observaciones (duplicados, mismo destinatario, cruce plata × tiempo, fallas parciales). Ver [`arquitectura.md`](arquitectura.md#delegación-y-consolidación-arquitectura-b-mecanismo-de-delegación--consolidación-de-resultados).
 
-| Intención | Workers |
-|---|---|
-| nuevo_lead | documental (servicios/proceso) + agenda (horarios) |
-| consulta_proyecto | documental (informe + ficha) + agenda (hitos) |
-| presupuesto | presupuestos (cálculo) + documental (condiciones) |
-| agenda | agenda (horarios + propone evento) |
-| documentacion | documental |
-| reclamo | documental (desvíos) + agenda (próxima visita) → escalar |
-| otro | documental (FAQ) |
+## Frontera crítica: administrativo = PLATA, proyectos = TIEMPO
+Está escrita en el prompt del router y en la `frontera` de cada agente, y el código la refuerza: proyectos **no tiene** tools de cobros y administrativo **no tiene** tools de hitos. El dataset de evaluación incluye 7 casos limítrofes entre estos dos agentes.
 
-## Documental (researcher) — `agents/workers.py::documental`
-- **Tools**: `buscar_documentos`, `consultar_proyecto` (solo lectura).
-- **Hace**: recupera evidencia con fuente y sección; si no alcanza, devuelve `partial` y no inventa.
-- **Límite**: nunca devuelve documentos de otro proyecto.
+## Comercial — `agents/comercial.py`
+Calificación y seguimiento de leads. No da precios (eso es de administrativo).
 
-## Agenda y vencimientos — `agents/workers.py::agenda`
-- **Tools**: `listar_vencimientos`, `consultar_proyecto`. **Propone**: `crear_evento_agenda`.
-- **Hace**: muestra los hitos del proyecto en los próximos 30 días y hasta 3 horarios libres (martes y jueves, 10 y 15 h).
+| Tool | Tipo | Nivel | Riesgo |
+|---|---|---|---|
+| `buscar_contacto` | lectura | 1 | bajo |
+| `listar_leads` | lectura | 1 | bajo |
+| `calificar_lead` (A/B/C: zona, presupuesto, tipo de proyecto) | lectura | 1 | bajo |
+| `consultar_servicios` (sin precios) | lectura | 1 | bajo |
+| `registrar_lead` | interna | 2 | bajo |
+| `enviar_mensaje` | **externa** | 3 | medio |
 
-## Presupuestos y reportes — `agents/workers.py::presupuestos`
-- **Tools**: `calcular_honorarios` (determinístico, según el tarifario). **Propone**: `registrar_presupuesto`.
-- **Hace**: arma el detalle por etapa, subtotal, IVA y total. Si faltan datos, devuelve `partial` con preguntas.
-- **Límite**: no ofrece descuentos (`comprometer_descuento` es nivel 4).
+Pedidos típicos: "Me escribió Carla por Instagram: '…'" → califica, registra y redacta la respuesta. "Haceme el seguimiento de los leads que no contestaron" → lista los leads con más de 5 días sin contacto y prepara un mensaje para cada uno.
 
-## Atención (consolidador/redactor) — `agents/atencion.py`
-- **Skill**: la selecciona según la intención (progressive disclosure).
-- **Hace**: deduplica por `task_id`, cita fuentes, declara faltantes y contradicciones (por ejemplo, hitos vencidos sin cumplir) y marca `escalar_a_humano` en los reclamos. **Propone**: `enviar_respuesta`.
-- **No hace**: consultar fuentes por su cuenta, ocultar fallas de los workers ni enviar.
+## Contenidos — `agents/contenidos.py`
+Calendario editorial y borradores (copy, hashtags y **brief visual en texto**; no genera imágenes). Solo usa obras marcadas como `publicable`.
 
-## Revisor (critic) — `agents/critic.py`
-- **Rúbrica**: firma, políticas (descuentos, garantías), montos iguales al cálculo, faltantes declarados, escalamiento de reclamos y longitud.
-- **Límite**: `max_revisiones` (1 por defecto). Después pasa a revisión humana con las observaciones visibles.
+| Tool | Tipo | Nivel | Riesgo |
+|---|---|---|---|
+| `calendario_contenidos`, `pilares_contenido`, `obras_publicables`, `consultar_servicios` | lectura | 1 | bajo |
+| `programar_posts` | **externa** | 3 | medio |
 
-## Humano del estudio (HITL)
-- Ve la propuesta versionada (respuesta, fuentes, faltantes, crítica y acciones con riesgo).
-- Decide **approve** (todo o algunas `approved_action_ids`), **edit** (genera una nueva versión que hay que volver a aprobar) o **reject**.
+Pedidos típicos: "Armame el calendario de posts de diciembre" (martes y viernes, rotando pilares) o "Un reel con tips de iluminación".
+
+## Administrativo — `agents/administrativo.py` (PLATA)
+
+| Tool | Tipo | Nivel | Riesgo |
+|---|---|---|---|
+| `consultar_precios`, `calcular_presupuesto`, `resumen_facturacion`, `cobros_pendientes`, `buscar_contacto` | lectura | 1 | bajo |
+| `registrar_cobro` | interna | 2 | bajo |
+| `enviar_presupuesto` | **externa** | 3 | medio |
+| `enviar_recordatorio_cobro` (precondición: 7 días) | **externa** | 3 | medio |
+| `emitir_factura` (precondiciones: no duplicar, no exceder) | **externa** | 3 | **alto** |
+| `aplicar_descuento` | — | **4** | no delegable |
+
+Pedidos típicos: "¿Cuánto facturé en octubre?" (informativo), "¿Quién me debe plata?", "Facturale el saldo a Martín Gómez", "Presupuesto para Sofía: 2 ambientes y 3 renders", "Mandale un recordatorio de pago a Gómez".
+
+## Gestión de proyectos — `agents/proyectos.py` (TIEMPO)
+
+| Tool | Tipo | Nivel | Riesgo |
+|---|---|---|---|
+| `listar_obras`, `consultar_obra`, `proximos_hitos`, `buscar_contacto` | lectura | 1 | bajo |
+| `actualizar_hito` | interna | 2 | bajo |
+| `enviar_mensaje` (aviso al cliente) | **externa** | 3 | medio |
+| `agendar_evento` (invita al cliente) | **externa** | 3 | medio |
+
+Pedidos típicos: "¿Qué entregas tengo esta semana?", "¿Cómo va la obra de Valentina?", "Se atrasaron los muebles de Gómez, pasalo al 25/11 y avisale", "Marcá como cumplida la planta de equipamiento".
+
+## Dónde vive el estado de cada obra (resuelve el pendiente §9)
+En las tablas `obras` (etapa, fechas, `publicable`), `hitos` (tipo `hito` o `entregable`, fecha, estado, responsable) y `eventos`, del mismo Postgres. El agente de proyectos las consulta con `consultar_obra` y `proximos_hitos`, y las modifica solo proponiendo `actualizar_hito` o `agendar_evento`.
+
+## Modo LLM (agent loop)
+`AgenteBase._loop_llm`: el modelo devuelve un `PasoAgente` estructurado (`tool` con `args_json`, o `final` con `operaciones`). El runtime valida el JSON, aplica la policy y ejecuta **solo lecturas**; los errores vuelven al modelo como observación. El loop tiene un límite de 5 pasos. Si el LLM falla, se usa el modo local y queda registrado en la traza (`modo = llm_fallback_local`).

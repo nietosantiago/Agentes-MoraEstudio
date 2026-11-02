@@ -1,18 +1,22 @@
 [project]
 name = "mora-agentes"
-version = "0.1.0"
-description = "Sistema multiagente para Mora Estudio (diseño y arquitectura): atención, documentos, agenda y presupuestos."
-requires-python = ">=3.11"
+version = "0.2.0"
+description = "Sistema multiagente para un estudio de diseño de interiores (TFI): comercial, contenidos, administrativo y proyectos con HITL."
+requires-python = ">=3.11,<3.15"
 dependencies = [
     "pydantic>=2.7",
     "langgraph>=1.0,<2",
     "langgraph-checkpoint-sqlite>=3.0",
     "google-genai>=1.0",
     "python-dotenv>=1.0",
+    "langgraph-checkpoint-postgres>=2.0",
+    "psycopg[binary]>=3.1",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "httpx>=0.27"]
 
 [project.scripts]
 mora = "mora.cli:main"
@@ -23,6 +27,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+mora = ["schema.sql", "static/*.html"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

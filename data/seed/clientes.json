@@ -1,0 +1,5 @@
+[
+  {"id": "CLI-01", "nombre": "Valentina Sosa", "email": "valentina.sosa@example.com", "telefono": "+54 9 342 555-0101", "ciudad": "Santa Fe", "canal_preferido": "whatsapp", "cuit": "27-30111222-3", "condicion_iva": "consumidor_final"},
+  {"id": "CLI-02", "nombre": "Martín Gómez", "email": "martin.gomez@example.com", "telefono": "+54 9 342 555-0202", "ciudad": "Santo Tomé", "canal_preferido": "email", "cuit": "20-28333444-5", "condicion_iva": "consumidor_final"},
+  {"id": "CLI-03", "nombre": "Estudio Contable Ríos", "email": "administracion@riosestudio.example.com", "telefono": "+54 9 342 555-0303", "ciudad": "Santa Fe", "canal_preferido": "email", "cuit": "30-71222333-9", "condicion_iva": "responsable_inscripto"}
+]

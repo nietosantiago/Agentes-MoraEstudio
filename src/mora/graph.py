@@ -1,282 +1,266 @@
-"""Orquestación con LangGraph (C11 + C12).
+"""Grafo LangGraph del estudio.
 
-intake → triage → plan ─Send×N→ worker ─fan-in→ consolidate ⇄ critic → prepare → review(interrupt)
-   review ─approve→ policy → execute → remember → END
-   review ─edit→ review (nueva versión)      review ─reject→ rejected → END
+            carga_contexto  (marca + cliente)
+                  ↓
+               router  ── confianza < umbral ──► aclaracion (interrupt: la diseñadora elige)
+                  │  delegación: Send por subpedido (1 a 3 agentes, en paralelo)
+     ┌──────────┬─┴────────┬──────────┐                │
+ comercial  contenidos  administrativo  proyectos ◄────┘
+     └──────────┴─┬────────┴──────────┘
+             consolidador  (una respuesta + una acción; duplicados, conflictos plata×tiempo)
+        ¿acción con efecto? ── no ──► END (respuesta informativa)
+                  ↓ sí
+            revision (interrupt)  ── modificado ──► vuelve a los agentes (único ciclo)
+                  │                ── rechazado ──► END
+                  ↓ aprobado
+               ejecutor (policy + idempotencia) ──► END
 
-Reglas de diseño:
-- Los side effects viven SOLO en `execute`, después de `review` (al reanudar, LangGraph re-entra al nodo
-  que contiene interrupt(): ese nodo no debe tener efectos).
-- `policy` vuelve a validar todo: la aprobación humana no reemplaza al Policy Gate.
-- `execute` usa idempotency_key = run_id:action_id contra el ledger: reanudar no duplica efectos.
+Reglas:
+- Los agentes NO ejecutan nada: dejan `accion_pendiente` en el estado.
+- Al reanudar, LangGraph re-entra al nodo que contiene interrupt(): `revision` no tiene efectos.
+- El ejecutor re-autoriza cada operación (la aprobación no reemplaza la policy) y usa un ledger
+  con idempotency_key = thread:accion:operacion, así un reintento no duplica facturas ni mensajes.
 """
 from __future__ import annotations
 
+import json
 import operator
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated
 
+from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
 from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
 from langgraph.types import Send, interrupt
+from pydantic import ValidationError
 from typing_extensions import TypedDict
 
-from .agents.atencion import consolidar
-from .agents.critic import criticar
-from .agents.supervisor import PlanError, planificar
-from .agents.triage import clasificar
-from .agents.workers import run_worker
-from .contracts import (ActionResult, Clasificacion, ConsolidatedAnswer, HumanDecision, PendingAction, Propuesta,
-                        SolicitudEntrante, WorkerOutput, WorkerTask)
+from .agents.base import EntradaAgente
+from .agents.registro import AGENTES_CLASES
+from .agents.router import pregunta_aclaracion, rutear
+from .consolidacion import consolidar
+from .contracts import AGENTES, AccionPendiente, DecisionHumana, DecisionRouter, ResultadoAgente, ResultadoOperacion
 from .deps import Deps
-from .memory import MemoryItem
 from .tools import PolicyError
+from .tracing import traced
 
 
-class MoraState(TypedDict, total=False):
-    run_id: str
-    solicitud: dict
-    memoria: list[str]
-    clasificacion: dict
-    tasks: list[dict]
-    plan_source: str
-    worker_outputs: Annotated[list[dict], operator.add]  # reducer para ramas paralelas
-    trace: Annotated[list[dict], operator.add]
-    respuesta: dict
-    critica: dict
-    revisiones: int
-    propuesta: dict
-    decision: dict
-    autorizadas: list[dict]
-    resultados: list[dict]
-    status: str
-    error: str
+def acumular_resultados(actual: list | None, nuevo: list | None) -> list:
+    """Reducer para el fan-in de agentes en paralelo. `None` reinicia la lista (nueva ronda)."""
+    if nuevo is None:
+        return []
+    return (actual or []) + nuevo
 
 
-def _ev(actor: str, event: str, **data) -> dict:
-    return {"actor": actor, "event": event, "at": datetime.now().isoformat(timespec="seconds"), **data}
+class EstadoEstudio(TypedDict, total=False):
+    messages: Annotated[list[AnyMessage], add_messages]
+    thread_id: str
+    cliente_activo: str | None
+    agente_destino: str | None
+    confianza_router: float
+    justificacion_router: str
+    metodo_router: str
+    accion_pendiente: dict | None     # qué se va a ejecutar, esperando el OK
+    decision_humana: str | None       # aprobado / modificado / rechazado
+    correccion: str | None
+    cambios: dict | None
+    resultado_ejecucion: list[dict]
+    tareas: list[dict]                # delegación: [{"agente", "pedido"}] (1 a 3)
+    ronda: int                        # cada (re)despacho a los agentes es una ronda
+    resultados_agentes: Annotated[list[dict], acumular_resultados]
+    turno: int
+    estado: str                       # informativo | esperando_aclaracion | esperando_aprobacion | ejecutado | rechazado
+    trazas: Annotated[list[dict], operator.add]  # tokens, costo y latencia por nodo
+
+
+def _ultimo_humano(state: EstadoEstudio) -> str:
+    for m in reversed(state.get("messages", [])):
+        if isinstance(m, HumanMessage):
+            return str(m.content)
+    return ""
 
 
 def build_graph(deps: Deps, checkpointer=None):
-    def log(state: MoraState, actor: str, event: str, **data) -> list[dict]:
-        deps.ledger.log(state["run_id"], actor, event, **data)
-        return [_ev(actor, event, **data)]
+    s = deps.settings
 
-    # ------------------------------------------------------------ nodos
-    def intake(state: MoraState):
-        sol = SolicitudEntrante.model_validate(state["solicitud"])
-        cliente = deps.repo.cliente_por_contacto(sol.remitente)
-        key = cliente["id"] if cliente else sol.remitente.lower()
-        memoria = [m.content for m in deps.memory.retrieve(key)]
-        return {"memoria": memoria, "revisiones": 0, "status": "in_progress",
-                "trace": log(state, "intake", "request_received", canal=sol.canal, memorias=len(memoria))}
+    @traced("carga_contexto", s)
+    def carga_contexto(state: EstadoEstudio):
+        turno = sum(1 for m in state.get("messages", []) if isinstance(m, HumanMessage))
+        return {"turno": turno, "accion_pendiente": None, "decision_humana": None, "correccion": None,
+                "cambios": None, "resultado_ejecucion": [], "estado": "en_curso", "resultados_agentes": None,
+                "tareas": [], "ronda": 0,
+                "_traza_extra": {"marca": f"{deps.marca.name}@{deps.marca.version}",
+                                 "cliente": state.get("cliente_activo")}}
 
-    def triage(state: MoraState):
-        sol = SolicitudEntrante.model_validate(state["solicitud"])
-        c = clasificar(sol, deps.repo, deps.llm)
-        return {"clasificacion": c.model_dump(mode="json"),
-                "trace": log(state, "triage", "classified", intencion=c.intencion, urgencia=c.urgencia,
-                             cliente_id=c.cliente_id, metodo=c.metodo)}
+    @traced("router", s)
+    def router(state: EstadoEstudio):
+        texto = _ultimo_humano(state)
+        d = rutear(texto, deps.llm, s.umbral_router)
+        tareas = ([{"agente": x.agente, "pedido": x.pedido} for x in d.subpedidos] if d.es_multiple
+                  else [{"agente": d.agente, "pedido": texto}])
+        return {"agente_destino": d.agente, "confianza_router": d.confianza, "justificacion_router": d.justificacion,
+                "metodo_router": d.metodo, "tareas": tareas, "ronda": 1,
+                "_traza_extra": {"agente": d.agente, "confianza": d.confianza, "metodo": d.metodo,
+                                 "justificacion": d.justificacion, "delegacion": [t["agente"] for t in tareas]}}
 
-    def plan(state: MoraState):
-        sol = SolicitudEntrante.model_validate(state["solicitud"])
-        c = Clasificacion.model_validate(state["clasificacion"])
+    def despachar(state: EstadoEstudio) -> list[Send]:
+        """Delegación: un Send por subpedido. Cada agente recibe solo lo que necesita."""
+        base = {k: state.get(k) for k in ("messages", "thread_id", "cliente_activo", "turno", "accion_pendiente",
+                                          "correccion", "ronda")}
+        completo = _ultimo_humano(state)
+        return [Send(t["agente"], {**base, "tarea": {**t, "indice": i, "contexto": completo}})
+                for i, t in enumerate(state["tareas"])]
+
+    def salida_router(state: EstadoEstudio):
+        if state["confianza_router"] < s.umbral_router:
+            return "aclaracion"
+        return despachar(state)
+
+    def aclaracion(state: EstadoEstudio):
+        """Pregunta en vez de adivinar. Sin efectos (se re-ejecuta al reanudar)."""
+        d = DecisionRouter(agente=state["agente_destino"], confianza=state["confianza_router"],
+                           justificacion=state.get("justificacion_router", ""))
+        resp = interrupt({"tipo": "aclaracion", **pregunta_aclaracion(_ultimo_humano(state), d)})
+        agente = resp.get("agente") if isinstance(resp, dict) else None
+        if agente not in AGENTES:
+            return {"estado": "informativo", "messages": [AIMessage("No derivé el pedido. Reformulalo cuando quieras.")]}
+        return {"agente_destino": agente, "confianza_router": 1.0, "metodo_router": "humano",
+                "justificacion_router": "elegido por la diseñadora", "ronda": 1,
+                "tareas": [{"agente": agente, "pedido": _ultimo_humano(state)}]}
+
+    def salida_aclaracion(state: EstadoEstudio):
+        return despachar(state) if state.get("metodo_router") == "humano" else END
+
+    def make_agente(nombre: str):
+        @traced(nombre, s)
+        def nodo(state: dict):
+            tarea = state.get("tarea") or {"pedido": _ultimo_humano(state), "indice": 0, "contexto": ""}
+            previa = AccionPendiente.model_validate(state["accion_pendiente"]) if state.get("accion_pendiente") else None
+            texto = tarea["pedido"]
+            if state.get("correccion"):
+                texto = f"{state['correccion']} || {texto}"  # la corrección tiene prioridad al extraer datos
+            cliente = deps.db.one("SELECT * FROM clientes WHERE id=?", (state["cliente_activo"],)) \
+                if state.get("cliente_activo") else None
+            e = EntradaAgente(texto=texto, turno=state.get("turno", 0), thread_id=state.get("thread_id", ""),
+                              cliente=cliente, correccion=state.get("correccion") or "", accion_previa=previa,
+                              historial=[str(m.content) for m in state.get("messages", [])[-6:]],
+                              contexto=tarea.get("contexto") or "")
+            try:
+                r = AGENTES_CLASES[nombre](deps).ejecutar(e)
+            except Exception as exc:  # falla parcial: el resto de los agentes sigue y el consolidador la muestra
+                r = ResultadoAgente(respuesta="No pude completar esta parte del pedido.",
+                                    errores=[f"{type(exc).__name__}: {str(exc)[:120]}"])
+            return {"resultados_agentes": [{"ronda": state.get("ronda", 1), "indice": tarea["indice"],
+                                            "agente": nombre, "resultado": r.model_dump(mode="json")}],
+                    "_traza_extra": {"tools": r.tools_usadas, "errores": r.errores, "modo": r.modo,
+                                     "propone_accion": bool(r.accion), "subpedido": tarea["pedido"][:120]}}
+        return nodo
+
+    @traced("consolidador", s)
+    def consolidador(state: EstadoEstudio):
+        ronda = state.get("ronda", 1)
+        res = sorted((x for x in state.get("resultados_agentes", []) if x["ronda"] == ronda), key=lambda x: x["indice"])
+        pares = [(x["agente"], ResultadoAgente.model_validate(x["resultado"])) for x in res]
+        previa = state.get("accion_pendiente")
+        version = (previa or {}).get("version", 0) + 1 if state.get("decision_humana") == "modificado" else 1
+        respuesta, accion, meta = consolidar(pares, turno=state.get("turno", 0), version=version, db=deps.db,
+                                             cambios=state.get("cambios"))
+        autor = pares[0][0] if len(pares) == 1 else "consolidador"
+        return {"accion_pendiente": accion.model_dump(mode="json") if accion else None,
+                "estado": "esperando_aprobacion" if accion else "informativo", "correccion": None, "cambios": None,
+                "messages": [AIMessage(respuesta, name=autor)], "_traza_extra": meta}
+
+    def salida_consolidador(state: EstadoEstudio) -> str:
+        return "revision" if state.get("accion_pendiente") else END
+
+    def revision(state: EstadoEstudio):
+        """Human-in-the-loop. Sin efectos: al reanudar, este nodo se ejecuta de nuevo desde el principio."""
+        accion = AccionPendiente.model_validate(state["accion_pendiente"])
+        raw = interrupt({"tipo": "aprobacion", "accion_hash": accion.hash, "accion": accion.model_dump(mode="json")})
         try:
-            tasks, source = planificar(sol, c, deps.budget, deps.llm)
-        except PlanError as exc:
-            return {"tasks": [], "plan_source": "error", "error": str(exc),
-                    "trace": log(state, "supervisor", "plan_invalid", error=str(exc))}
-        return {"tasks": [t.model_dump() for t in tasks], "plan_source": source,
-                "trace": log(state, "supervisor", "plan_created", source=source,
-                             tasks=[f"{t.task_id}:{t.role}" for t in tasks])}
+            d = DecisionHumana.model_validate(raw)
+        except ValidationError:
+            return {"decision_humana": "invalida"}
+        if d.accion_hash != accion.hash:  # aprobación de una versión vieja: no vale
+            return {"decision_humana": "desactualizada",
+                    "messages": [AIMessage("Esa decisión era sobre otra versión de la propuesta. Revisá la actual.")]}
+        if d.decision == "rechazado":
+            return {"decision_humana": "rechazado", "estado": "rechazado", "accion_pendiente": None,
+                    "messages": [AIMessage(f"Listo, descarté: {accion.resumen}." + (f" ({d.comentario})" if d.comentario else ""))]}
+        if d.decision == "modificado":
+            return {"decision_humana": "modificado", "correccion": d.correccion or d.comentario, "cambios": d.cambios,
+                    "ronda": state.get("ronda", 1) + 1, "resultados_agentes": None}
+        return {"decision_humana": "aprobado"}
 
-    def dispatch(state: MoraState):
-        if not state.get("tasks"):
-            return "consolidate"
-        payload = {k: state[k] for k in ("run_id", "solicitud", "clasificacion")}
-        return [Send("worker", {**payload, "task": t}) for t in state["tasks"]]
+    def salida_revision(state: EstadoEstudio):
+        d = state.get("decision_humana")
+        if d == "aprobado":
+            return "ejecutor"
+        if d == "modificado":
+            return despachar(state)  # único ciclo del grafo: vuelven los mismos agentes con la corrección
+        if d == "rechazado":
+            return END
+        return "revision"  # inválida o desactualizada: se vuelve a pedir
 
-    def worker(state: dict):
-        task = WorkerTask.model_validate(state["task"])
-        out = run_worker(task, SolicitudEntrante.model_validate(state["solicitud"]),
-                         Clasificacion.model_validate(state["clasificacion"]), deps)
-        deps.ledger.log(state["run_id"], task.role, "task_completed", task_id=task.task_id, status=out.status,
-                        latency_ms=out.latency_ms)
-        return {"worker_outputs": [out.model_dump(mode="json")],
-                "trace": [_ev(task.role, "task_completed", task_id=task.task_id, status=out.status,
-                              latency_ms=out.latency_ms)]}
-
-    def consolidate(state: MoraState):
-        outs = [WorkerOutput.model_validate(o) for o in state.get("worker_outputs", [])]
-        feedback = (state.get("critica") or {}).get("critical_issues")
-        ans = consolidar(SolicitudEntrante.model_validate(state["solicitud"]),
-                         Clasificacion.model_validate(state["clasificacion"]), outs, deps,
-                         feedback=feedback, memoria=state.get("memoria"))
-        return {"respuesta": ans.model_dump(mode="json"),
-                "trace": log(state, "atencion", "draft_created", status=ans.status, skill=ans.skill,
-                             fuentes=len(ans.sources))}
-
-    def critic(state: MoraState):
-        outs = [WorkerOutput.model_validate(o) for o in state.get("worker_outputs", [])]
-        crit = criticar(ConsolidatedAnswer.model_validate(state["respuesta"]),
-                        Clasificacion.model_validate(state["clasificacion"]), outs)
-        return {"critica": crit.model_dump(), "revisiones": state.get("revisiones", 0) + (0 if crit.passed else 1),
-                "trace": log(state, "critic", "reviewed", passed=crit.passed, issues=crit.critical_issues)}
-
-    def after_critic(state: MoraState):
-        if state["critica"]["passed"] or state["revisiones"] > deps.budget.max_revisiones:
-            return "prepare"
-        return "consolidate"
-
-    def prepare(state: MoraState):
-        """Fase PREPARE: arma la propuesta revisable. Sin efectos."""
-        sol = SolicitudEntrante.model_validate(state["solicitud"])
-        ans = ConsolidatedAnswer.model_validate(state["respuesta"])
-        acciones: list[PendingAction] = []
-        for o in state.get("worker_outputs", []):
-            for a in WorkerOutput.model_validate(o).proposed_actions:
-                if deps.policy.can_propose(a.proposed_by, a.tool):
-                    acciones.append(a)
-        acciones.append(PendingAction(
-            action_id="enviar-respuesta-1", tool="enviar_respuesta", proposed_by="atencion", risk_level="high",
-            args={"canal": sol.canal, "destinatario": sol.remitente, "asunto": ans.asunto, "cuerpo": ans.answer,
-                  "en_respuesta_a": sol.id},
-            rationale="Respuesta al cliente redactada por el agente de atención."))
-        for a in acciones:
-            a.idempotency_key = f"{state['run_id']}:{a.action_id}"
-        prop = Propuesta(run_id=state["run_id"], respuesta=ans, acciones=acciones,
-                         critica=state.get("critica"))
-        return {"propuesta": prop.model_dump(mode="json"), "status": "waiting_for_approval",
-                "trace": log(state, "runtime", "approval_requested", version=prop.version,
-                             proposal_hash=prop.proposal_hash, acciones=[a.tool for a in acciones])}
-
-    def review(state: MoraState):
-        """HITL. Sin efectos: al reanudar, LangGraph re-ejecuta este nodo desde el principio."""
-        prop = Propuesta.model_validate(state["propuesta"])
-        raw = interrupt({
-            "type": "approval_request", "run_id": prop.run_id, "version": prop.version,
-            "proposal_hash": prop.proposal_hash, "escalar_a_humano": prop.respuesta.escalar_a_humano,
-            "respuesta": prop.respuesta.model_dump(mode="json"),
-            "acciones": [a.model_dump(mode="json") for a in prop.acciones],
-            "critica": prop.critica.model_dump() if prop.critica else None,
-        })
-        dec = HumanDecision.model_validate(raw)
-        if dec.proposal_hash != prop.proposal_hash:
-            return {"decision": {**dec.model_dump(), "decision": "stale"},
-                    "trace": log(state, dec.actor, "decision_stale", recibido=dec.proposal_hash,
-                                 vigente=prop.proposal_hash)}
-        if dec.decision == "edit":
-            nuevas = []
-            for a in prop.acciones:
-                args = {**a.args, **dec.edited_args.get(a.action_id, {})}
-                if a.tool == "enviar_respuesta" and dec.edited_answer:
-                    args["cuerpo"] = dec.edited_answer
-                deps.policy.registry[a.tool].args_model.model_validate(args)  # edición también se valida
-                nuevas.append(a.model_copy(update={"args": args}))
-            resp = prop.respuesta.model_copy(update={"answer": dec.edited_answer or prop.respuesta.answer})
-            nueva = prop.model_copy(update={"version": prop.version + 1, "acciones": nuevas, "respuesta": resp})
-            return {"propuesta": nueva.model_dump(mode="json"), "decision": dec.model_dump(),
-                    "trace": log(state, dec.actor, "proposal_edited", version=nueva.version,
-                                 proposal_hash=nueva.proposal_hash)}
-        return {"decision": dec.model_dump(),
-                "trace": log(state, dec.actor, f"decision_{dec.decision}", comment=dec.comment)}
-
-    def after_review(state: MoraState):
-        d = state["decision"]["decision"]
-        return {"approve": "policy", "reject": "rejected"}.get(d, "review")  # edit/stale -> nueva revisión
-
-    def policy(state: MoraState):
-        prop = Propuesta.model_validate(state["propuesta"])
-        dec = HumanDecision.model_validate(state["decision"])
-        aprobadas = set(dec.approved_action_ids or [a.action_id for a in prop.acciones])
-        autorizadas, bloqueadas = [], []
-        for a in prop.acciones:
-            if a.action_id not in aprobadas:
-                bloqueadas.append(ActionResult(action_id=a.action_id, tool=a.tool, status="blocked",
-                                               detail="no aprobada por el humano"))
+    @traced("ejecutor", s)
+    def ejecutor(state: EstadoEstudio):
+        accion = AccionPendiente.model_validate(state["accion_pendiente"])
+        thread = state["thread_id"]  # obligatorio: forma parte de la idempotency_key
+        ctx, resultados = deps.tool_ctx, []
+        for i, op in enumerate(accion.operaciones):
+            key = f"{thread}:{accion.accion_id}:{i}"
+            if deps.db.one("SELECT estado FROM efectos WHERE idempotency_key=?", (key,)):
+                resultados.append(ResultadoOperacion(indice=i, tool=op.tool, estado="duplicada_omitida",
+                                                     detalle="ya ejecutada antes (ledger)"))
                 continue
             try:
-                deps.policy.authorize_execution(a, human_approved=dec.proposal_hash == prop.proposal_hash)
-                autorizadas.append(a.model_dump(mode="json"))
-            except (PolicyError, ValueError) as exc:
-                bloqueadas.append(ActionResult(action_id=a.action_id, tool=a.tool, status="blocked", detail=str(exc)))
-        return {"autorizadas": autorizadas, "resultados": [b.model_dump() for b in bloqueadas],
-                "trace": log(state, "policy", "authorized", ok=[a["action_id"] for a in autorizadas],
-                             bloqueadas=[b.action_id for b in bloqueadas])}
-
-    def execute(state: MoraState):
-        resultados = list(state.get("resultados", []))
-        for raw in state.get("autorizadas", []):
-            a = PendingAction.model_validate(raw)
-            spec = deps.policy.registry[a.tool]
-            prev = deps.ledger.get(a.idempotency_key)
-            if prev or not deps.ledger.reserve(a.idempotency_key, state["run_id"], a.tool):
-                resultados.append(ActionResult(action_id=a.action_id, tool=a.tool, status="skipped_duplicate",
-                                               detail=f"ya registrado: {(prev or {}).get('status')}").model_dump())
+                spec = deps.policy.autorizar(accion, op, ctx, aprobada=True)
+            except (PolicyError, ValidationError, ValueError) as exc:
+                resultados.append(ResultadoOperacion(indice=i, tool=op.tool, estado="bloqueada", detalle=str(exc)))
+                continue
+            if not deps.db.insert("efectos", {"idempotency_key": key, "thread_id": thread, "tool": op.tool,
+                                              "estado": "en_curso", "resultado": None,
+                                              "creado": datetime.now().isoformat()}, on_conflict_nothing=True):
+                resultados.append(ResultadoOperacion(indice=i, tool=op.tool, estado="duplicada_omitida",
+                                                     detalle="ya ejecutada antes (ledger)"))
                 continue
             try:
-                out = spec.run(deps.tool_ctx, a.args)
-                deps.ledger.complete(a.idempotency_key, "executed", out)
-                resultados.append(ActionResult(action_id=a.action_id, tool=a.tool, status="executed",
-                                               detail=str(out.get("registro", ""))).model_dump())
-            except Exception as exc:
-                # outcome ambiguo: queda 'failed' en ledger; NO se reintenta automáticamente
-                deps.ledger.complete(a.idempotency_key, "failed", {"error": type(exc).__name__})
-                resultados.append(ActionResult(action_id=a.action_id, tool=a.tool, status="failed",
-                                               detail=type(exc).__name__).model_dump())
-        ok = all(r["status"] in ("executed", "skipped_duplicate") for r in resultados if r["status"] != "blocked")
-        return {"resultados": resultados, "status": "completed" if ok else "completed_with_errors",
-                "trace": log(state, "runtime", "actions_executed",
-                             resultados={r["action_id"]: r["status"] for r in resultados})}
+                out = spec.run(ctx, op.args)
+                deps.db.execute("UPDATE efectos SET estado='ejecutada', resultado=? WHERE idempotency_key=?",
+                                (json.dumps(out, default=str, ensure_ascii=False), key))
+                resultados.append(ResultadoOperacion(indice=i, tool=op.tool, estado="ejecutada",
+                                                     detalle=json.dumps(out, default=str, ensure_ascii=False)[:300]))
+            except Exception as exc:  # outcome ambiguo: queda registrado como fallido, NO se reintenta solo
+                deps.db.execute("UPDATE efectos SET estado='fallida', resultado=? WHERE idempotency_key=?",
+                                (json.dumps({"error": str(exc)}), key))
+                resultados.append(ResultadoOperacion(indice=i, tool=op.tool, estado="fallida", detalle=str(exc)))
+        ok = [r for r in resultados if r.estado == "ejecutada"]
+        mal = [r for r in resultados if r.estado in ("fallida", "bloqueada")]
+        texto = f"Hecho: {len(ok)}/{len(resultados)} operación(es) de «{accion.resumen}»."
+        if mal:
+            texto += " Problemas: " + "; ".join(f"{r.tool} {r.estado} ({r.detalle})" for r in mal)
+        return {"resultado_ejecucion": [r.model_dump() for r in resultados],
+                "estado": "ejecutado" if not mal else "ejecutado_con_errores",
+                "messages": [AIMessage(texto, name="ejecutor")],
+                "_traza_extra": {"resultados": {r.indice: r.estado for r in resultados}}}
 
-    def remember(state: MoraState):
-        """Write gate de memoria: solo hechos confirmados por ejecución aprobada."""
-        sol = SolicitudEntrante.model_validate(state["solicitud"])
-        c = Clasificacion.model_validate(state["clasificacion"])
-        key = c.cliente_id or sol.remitente.lower()
-        ejecutadas = {r["tool"] for r in state.get("resultados", []) if r["status"] == "executed"}
-        escritos = 0
-        if "enviar_respuesta" in ejecutadas:
-            escritos += deps.memory.write(MemoryItem(
-                cliente_key=key, kind="interaccion", source=state["run_id"], confidence=0.9,
-                content=f"{deps.settings.hoy.isoformat()}: respondimos consulta de tipo '{c.intencion}' por {sol.canal}",
-                expires_at=deps.memory.ttl(180)))
-            escritos += deps.memory.write(MemoryItem(
-                cliente_key=key, kind="preferencia", source=state["run_id"], confidence=0.6,
-                content=f"Suele contactar por {sol.canal}"))
-        if "registrar_presupuesto" in ejecutadas:
-            pres = next(o for o in state["worker_outputs"] if o["role"] == "presupuestos")
-            calc = pres["data"]["calculo"]
-            escritos += deps.memory.write(MemoryItem(
-                cliente_key=key, kind="hecho", source=state["run_id"], confidence=1.0,
-                content=f"Presupuesto {pres['data']['presupuesto_id']} enviado: {calc['moneda']} {calc['total']}",
-                expires_at=deps.memory.ttl(calc["validez_dias"])))
-        return {"trace": log(state, "memory", "memory_written", items=escritos)}
+    g = StateGraph(EstadoEstudio)
+    g.add_node("carga_contexto", carga_contexto)
+    g.add_node("router", router)
+    g.add_node("aclaracion", aclaracion)
+    for a in AGENTES:
+        g.add_node(a, make_agente(a))
+    g.add_node("consolidador", consolidador)
+    g.add_node("revision", revision)
+    g.add_node("ejecutor", ejecutor)
 
-    def rejected(state: MoraState):
-        return {"status": "rejected", "trace": log(state, "runtime", "run_rejected")}
-
-    # ------------------------------------------------------------ grafo
-    g = StateGraph(MoraState)
-    for name, fn in [("intake", intake), ("triage", triage), ("plan", plan), ("worker", worker),
-                     ("consolidate", consolidate), ("critic", critic), ("prepare", prepare), ("review", review),
-                     ("policy", policy), ("execute", execute), ("remember", remember), ("rejected", rejected)]:
-        g.add_node(name, fn)
-    g.add_edge(START, "intake")
-    g.add_edge("intake", "triage")
-    g.add_edge("triage", "plan")
-    g.add_conditional_edges("plan", dispatch, ["worker", "consolidate"])
-    g.add_edge("worker", "consolidate")  # fan-in: espera a todas las ramas del superstep
-    g.add_edge("consolidate", "critic")
-    g.add_conditional_edges("critic", after_critic, ["prepare", "consolidate"])
-    g.add_edge("prepare", "review")
-    g.add_conditional_edges("review", after_review, ["policy", "rejected", "review"])
-    g.add_edge("policy", "execute")
-    g.add_edge("execute", "remember")
-    g.add_edge("remember", END)
-    g.add_edge("rejected", END)
+    g.add_edge(START, "carga_contexto")
+    g.add_edge("carga_contexto", "router")
+    g.add_conditional_edges("router", salida_router, [*AGENTES, "aclaracion"])          # arista 1
+    g.add_conditional_edges("aclaracion", salida_aclaracion, [*AGENTES, END])
+    for a in AGENTES:
+        g.add_edge(a, "consolidador")                                                   # fan-in
+    g.add_conditional_edges("consolidador", salida_consolidador, ["revision", END])      # arista 2
+    g.add_conditional_edges("revision", salida_revision, ["ejecutor", "revision", END, *AGENTES])  # arista 3
+    g.add_edge("ejecutor", END)
     return g.compile(checkpointer=checkpointer)
-
-
-def run_config(run_id: str, deps: Deps) -> dict[str, Any]:
-    return {"configurable": {"thread_id": run_id}, "max_concurrency": deps.budget.max_parallel_workers,
-            "recursion_limit": 40}

@@ -1,0 +1,5 @@
+[
+  {"id": "PRE-2026-031", "cliente_id": "CLI-02", "lead_id": null, "fecha": "2026-09-10", "items": "[{\"servicio\": \"PRY-INT\", \"cantidad\": 110}, {\"servicio\": \"DIR-OBR\", \"cantidad\": 2.8}]", "total": 2680000, "estado": "aprobado", "validez_dias": 15},
+  {"id": "PRE-2026-036", "cliente_id": "CLI-01", "lead_id": null, "fecha": "2026-10-01", "items": "[{\"servicio\": \"ASE-DOM\", \"cantidad\": 1}, {\"servicio\": \"PRY-AMB\", \"cantidad\": 2}]", "total": 850000, "estado": "aprobado", "validez_dias": 15},
+  {"id": "PRE-2026-040", "cliente_id": null, "lead_id": "LEAD-03", "fecha": "2026-10-28", "items": "[{\"servicio\": \"PRY-AMB\", \"cantidad\": 1}]", "total": 380000, "estado": "enviado", "validez_dias": 15}
+]

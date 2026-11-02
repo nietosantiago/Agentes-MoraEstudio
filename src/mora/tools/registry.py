@@ -1,27 +1,33 @@
-"""Tool Registry + Policy Gate (C9) y niveles de autonomía (C11).
+"""Tool Registry + Policy Gate.
 
-Tres preguntas separadas:
-  1. ¿Qué tools existen?                  -> REGISTRY
-  2. ¿Qué tools puede usar/proponer un rol? -> ToolPolicy.allowed_tools / can_propose
-  3. ¿Esta llamada concreta se ejecuta?   -> ToolPolicy.authorize_execution (+ aprobación humana)
+Cada agente tiene SUS tools: eso es lo que justifica el multiagente (herramientas, permisos y riesgos
+distintos). Tres preguntas separadas:
+  ¿qué tools existen?                      -> registry
+  ¿qué puede leer / proponer este agente?  -> ToolPolicy.lectura / propuesta
+  ¿se ejecuta ESTA operación?              -> ToolPolicy.autorizar (+ aprobación humana + precondiciones)
 
-Niveles de autonomía:
-  1 automático (lecturas, cálculos) · 2 automático + log (escrituras internas reversibles)
-  3 aprobar antes (efectos externos) · 4 no delegar (excede la autoridad del sistema)
+Definición de "efecto externo" (contexto TFI §9):
+  tipo="externa" -> sale del estudio o es difícil de revertir (mensaje a lead/cliente, presupuesto
+                    enviado, factura, post programado, invitación de calendario). Nivel 3: aprobar antes.
+  tipo="interna" -> cambia datos propios y es reversible (registrar lead, actualizar hito, registrar
+                    cobro). Nivel 2. En el TFI también pasa por revisión (los agentes no ejecutan nada).
+  tipo="lectura" -> consultas y cálculos. Nivel 1. Respuesta informativa -> END sin molestar a nadie.
+  Nivel 4        -> no delegable (aplicar descuentos).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import date
 from typing import Any, Callable, Literal
 
 from pydantic import BaseModel
 
 from ..config import Settings
-from ..contracts import PendingAction
-from ..repository import EstudioRepo
-from ..retrieval import Retriever
+from ..contracts import AccionPendiente, Operacion
+from ..skills import Skill
 
-Risk = Literal["read", "internal_write", "side_effect"]
+Tipo = Literal["lectura", "interna", "externa"]
+NIVEL_RIESGO = {"bajo": 0, "medio": 1, "alto": 2}
 
 
 class PolicyError(PermissionError):
@@ -31,103 +37,150 @@ class PolicyError(PermissionError):
 @dataclass
 class ToolContext:
     settings: Settings
-    repo: EstudioRepo
-    retriever: Retriever
+    db: Any
+    facturacion: Any
+    marca: Skill
+
+    @property
+    def hoy(self) -> date:
+        return self.settings.hoy
 
 
 @dataclass(frozen=True)
 class ToolSpec:
     name: str
-    description: str          # model-facing: cuándo usarla y cuándo no
+    description: str                       # model-facing: qué hace, cuándo usarla y cuándo no
     args_model: type[BaseModel]
     handler: Callable[[ToolContext, BaseModel], dict[str, Any]]
-    risk: Risk
-    autonomy_level: Literal[1, 2, 3, 4]
-    timeout_s: float = 10.0
+    tipo: Tipo
+    nivel: Literal[1, 2, 3, 4]
+    riesgo: Literal["bajo", "medio", "alto"]
+    agentes: frozenset[str]
+    precondicion: Callable[[ToolContext, BaseModel], None] | None = field(default=None)
 
-    def run(self, ctx: ToolContext, raw_args: dict[str, Any]) -> dict[str, Any]:
-        args = self.args_model.model_validate(raw_args)  # validación estructural antes del handler
-        return self.handler(ctx, args)
+    def validar(self, args: dict[str, Any]) -> BaseModel:
+        return self.args_model.model_validate(args)
 
+    def run(self, ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
+        parsed = self.validar(args)
+        if self.precondicion:
+            self.precondicion(ctx, parsed)
+        return self.handler(ctx, parsed)
 
-# Qué puede LEER cada rol y qué puede PROPONER (nunca ejecutar) -----------------
-ROLE_READ: dict[str, set[str]] = {
-    "documental": {"buscar_documentos", "consultar_proyecto"},
-    "agenda": {"listar_vencimientos", "consultar_proyecto"},
-    "presupuestos": {"calcular_honorarios", "consultar_proyecto", "buscar_documentos"},
-    "atencion": set(),  # redacta con lo que recibe; no consulta fuentes por su cuenta
-}
-ROLE_PROPOSE: dict[str, set[str]] = {
-    "agenda": {"crear_evento_agenda"},
-    "presupuestos": {"registrar_presupuesto"},
-    "atencion": {"enviar_respuesta"},
-}
+    def schema_resumido(self) -> dict:
+        return {"name": self.name, "description": self.description, "tipo": self.tipo,
+                "args_schema": self.args_model.model_json_schema()}
 
 
 class ToolPolicy:
     def __init__(self, registry: dict[str, ToolSpec]):
         self.registry = registry
 
-    def allowed_tools(self, role: str) -> list[ToolSpec]:
-        return [self.registry[n] for n in sorted(ROLE_READ.get(role, set()))]
+    def lectura(self, agente: str) -> list[ToolSpec]:
+        return [s for s in self.registry.values() if s.tipo == "lectura" and agente in s.agentes]
 
-    def call(self, role: str, tool: str, ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
-        """Lectura directa por un worker: solo tools de riesgo 'read' habilitadas para su rol."""
+    def propuesta(self, agente: str) -> list[ToolSpec]:
+        return [s for s in self.registry.values() if s.tipo != "lectura" and agente in s.agentes and s.nivel < 4]
+
+    def call(self, agente: str, tool: str, ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
+        """Lectura directa por un agente. Escribir o enviar está prohibido acá: solo se propone."""
         spec = self.registry.get(tool)
         if spec is None:
             raise PolicyError(f"tool desconocida: {tool}")
-        if tool not in ROLE_READ.get(role, set()) or spec.risk != "read":
-            raise PolicyError(f"rol '{role}' no puede ejecutar '{tool}'")
+        if spec.tipo != "lectura" or agente not in spec.agentes:
+            raise PolicyError(f"el agente '{agente}' no puede ejecutar '{tool}'")
         return spec.run(ctx, args)
 
-    def can_propose(self, role: str, tool: str) -> bool:
-        spec = self.registry.get(tool)
-        return bool(spec) and tool in ROLE_PROPOSE.get(role, set()) and spec.autonomy_level < 4
-
-    def authorize_execution(self, action: PendingAction, *, human_approved: bool) -> ToolSpec:
-        """Se vuelve a validar TODO antes del efecto: la aprobación humana no reemplaza la policy."""
-        spec = self.registry.get(action.tool)
+    def validar_operacion(self, agente: str, op: Operacion) -> ToolSpec:
+        spec = self.registry.get(op.tool)
         if spec is None:
-            raise PolicyError(f"tool desconocida: {action.tool}")
-        if not self.can_propose(action.proposed_by, action.tool):
-            raise PolicyError(f"'{action.proposed_by}' no está autorizado a proponer '{action.tool}'")
-        if spec.autonomy_level == 4:
-            raise PolicyError(f"'{action.tool}' es nivel 4: no se delega")
-        if spec.autonomy_level == 3 and not human_approved:
-            raise PolicyError(f"'{action.tool}' requiere aprobación humana")
-        spec.args_model.model_validate(action.args)
+            raise PolicyError(f"tool desconocida: {op.tool}")
+        if spec.nivel == 4:
+            raise PolicyError(f"'{op.tool}' no es delegable: lo decide la diseñadora")
+        if spec.tipo == "lectura" or agente not in spec.agentes:
+            raise PolicyError(f"el agente '{agente}' no puede proponer '{op.tool}'")
+        spec.validar(op.args)
+        return spec
+
+    def clasificar(self, agente: str, ops: list[Operacion]) -> tuple[str, bool]:
+        specs = [self.validar_operacion(agente, o) for o in ops]
+        riesgo = max((s.riesgo for s in specs), key=NIVEL_RIESGO.__getitem__)
+        return riesgo, any(s.tipo == "externa" for s in specs)
+
+    def autorizar(self, accion: AccionPendiente, op: Operacion, ctx: ToolContext, *, aprobada: bool) -> ToolSpec:
+        """Se re-valida TODO antes del efecto: la aprobación humana no reemplaza la policy."""
+        spec = self.validar_operacion(op.agente or accion.agente, op)
+        if spec.nivel >= 2 and not aprobada:
+            raise PolicyError(f"'{op.tool}' requiere aprobación de la diseñadora")
+        if spec.precondicion:
+            spec.precondicion(ctx, spec.validar(op.args))
         return spec
 
 
 def build_registry() -> dict[str, ToolSpec]:
-    from . import handlers as h
+    from . import administrativo as adm
+    from . import comercial as com
+    from . import contenidos as con
+    from . import proyectos as pro
 
+    C, CO, A, P = "comercial", "contenidos", "administrativo", "proyectos"
+    f = frozenset
     specs = [
-        ToolSpec("buscar_documentos",
-                 "Busca en documentos del estudio (servicios, procesos, condiciones, informes de avance). "
-                 "Usar para respaldar afirmaciones con fuente. No usar para datos numéricos de tarifario.",
-                 h.BuscarDocumentosArgs, h.buscar_documentos, "read", 1),
-        ToolSpec("consultar_proyecto",
-                 "Devuelve ficha de un proyecto (etapa, avance, hitos, responsable) por proyecto_id.",
-                 h.ConsultarProyectoArgs, h.consultar_proyecto, "read", 1),
-        ToolSpec("listar_vencimientos",
-                 "Lista eventos y vencimientos de agenda en una ventana de días, opcionalmente por proyecto, "
-                 "y los próximos horarios libres para reuniones con clientes.",
-                 h.ListarVencimientosArgs, h.listar_vencimientos, "read", 1),
-        ToolSpec("calcular_honorarios",
-                 "Calcula honorarios según tarifario vigente (tipo de proyecto, m², etapas). Determinístico.",
-                 h.CalcularHonorariosArgs, h.calcular_honorarios, "read", 1),
-        ToolSpec("registrar_presupuesto",
-                 "Registra un presupuesto en borrador en el sistema interno (reversible).",
-                 h.RegistrarPresupuestoArgs, h.registrar_presupuesto, "internal_write", 2),
-        ToolSpec("crear_evento_agenda",
-                 "Crea un evento en la agenda del estudio e invita al cliente (efecto externo).",
-                 h.CrearEventoArgs, h.crear_evento_agenda, "side_effect", 3),
-        ToolSpec("enviar_respuesta",
-                 "Envía la respuesta al cliente por su canal (email/WhatsApp). Efecto externo irreversible.",
-                 h.EnviarRespuestaArgs, h.enviar_respuesta, "side_effect", 3),
-        ToolSpec("comprometer_descuento",
-                 "Compromete un descuento sobre el tarifario. Reservado a la dirección del estudio.",
-                 h.DescuentoArgs, h.no_delegable, "side_effect", 4),
+        # --- comercial
+        ToolSpec("buscar_contacto", "Busca clientes y leads por nombre o contacto. Usar para identificar a la persona.",
+                 com.BuscarContactoArgs, com.buscar_contacto, "lectura", 1, "bajo", f({C, A, P})),
+        ToolSpec("listar_leads", "Lista leads por estado y/o días sin contacto. Usar para seguimiento comercial.",
+                 com.ListarLeadsArgs, com.listar_leads, "lectura", 1, "bajo", f({C})),
+        ToolSpec("calificar_lead", "Califica un lead (A/B/C) según zona, presupuesto declarado y tipo de proyecto. "
+                 "Determinística: no usar el criterio propio.", com.CalificarLeadArgs, com.calificar_lead,
+                 "lectura", 1, "bajo", f({C})),
+        ToolSpec("consultar_servicios", "Describe los servicios del estudio (sin precios: los precios son del "
+                 "agente administrativo).", com.SinArgs, com.consultar_servicios, "lectura", 1, "bajo", f({C, CO})),
+        ToolSpec("registrar_lead", "Crea o actualiza un lead en la base del estudio.",
+                 com.RegistrarLeadArgs, com.registrar_lead, "interna", 2, "bajo", f({C})),
+        ToolSpec("enviar_mensaje", "Envía un mensaje a un lead o cliente por su canal. EFECTO EXTERNO.",
+                 com.EnviarMensajeArgs, com.enviar_mensaje, "externa", 3, "medio", f({C, P})),
+        # --- contenidos
+        ToolSpec("calendario_contenidos", "Posts programados o publicados de un mes (YYYY-MM).",
+                 con.CalendarioArgs, con.calendario_contenidos, "lectura", 1, "bajo", f({CO})),
+        ToolSpec("pilares_contenido", "Pilares de contenido y frecuencia de publicación de la marca.",
+                 con.SinArgs, con.pilares_contenido, "lectura", 1, "bajo", f({CO})),
+        ToolSpec("obras_publicables", "Obras con permiso del cliente para mostrarse en redes.",
+                 con.SinArgs, con.obras_publicables, "lectura", 1, "bajo", f({CO})),
+        ToolSpec("programar_posts", "Deja posts programados en el calendario para publicarse. EFECTO EXTERNO.",
+                 con.ProgramarPostsArgs, con.programar_posts, "externa", 3, "medio", f({CO})),
+        # --- administrativo (plata)
+        ToolSpec("consultar_precios", "Lista de precios vigente (tabla exacta).",
+                 adm.PreciosArgs, adm.consultar_precios, "lectura", 1, "bajo", f({A})),
+        ToolSpec("calcular_presupuesto", "Calcula un presupuesto con la tabla de precios: subtotal, mínimos, "
+                 "seña 50% y saldo. Determinística.", adm.CalcularPresupuestoArgs, adm.calcular_presupuesto,
+                 "lectura", 1, "bajo", f({A})),
+        ToolSpec("resumen_facturacion", "Total facturado entre dos fechas, por cliente.",
+                 adm.ResumenFacturacionArgs, adm.resumen_facturacion, "lectura", 1, "bajo", f({A})),
+        ToolSpec("cobros_pendientes", "Cobros pendientes (opcionalmente de un cliente), con días de atraso.",
+                 adm.CobrosPendientesArgs, adm.cobros_pendientes, "lectura", 1, "bajo", f({A})),
+        ToolSpec("enviar_presupuesto", "Registra y envía un presupuesto al cliente o lead. EFECTO EXTERNO.",
+                 adm.EnviarPresupuestoArgs, adm.enviar_presupuesto, "externa", 3, "medio", f({A})),
+        ToolSpec("emitir_factura", "Emite una factura electrónica por la API de facturación. EFECTO EXTERNO, "
+                 "irreversible.", adm.EmitirFacturaArgs, adm.emitir_factura, "externa", 3, "alto", f({A}),
+                 precondicion=adm.pre_emitir_factura),
+        ToolSpec("enviar_recordatorio_cobro", "Envía un recordatorio amable de pago. EFECTO EXTERNO.",
+                 adm.RecordatorioArgs, adm.enviar_recordatorio_cobro, "externa", 3, "medio", f({A}),
+                 precondicion=adm.pre_recordatorio),
+        ToolSpec("registrar_cobro", "Marca un cobro como recibido.",
+                 adm.RegistrarCobroArgs, adm.registrar_cobro, "interna", 2, "bajo", f({A})),
+        ToolSpec("aplicar_descuento", "Aplica un descuento. NO DELEGABLE.",
+                 adm.DescuentoArgs, adm.no_delegable, "externa", 4, "alto", f({A})),
+        # --- proyectos (tiempo)
+        ToolSpec("listar_obras", "Obras del estudio (activas o todas) con su etapa.",
+                 pro.ListarObrasArgs, pro.listar_obras, "lectura", 1, "bajo", f({P})),
+        ToolSpec("consultar_obra", "Ficha de una obra con hitos, entregables y eventos.",
+                 pro.ConsultarObraArgs, pro.consultar_obra, "lectura", 1, "bajo", f({P})),
+        ToolSpec("proximos_hitos", "Hitos y entregables de los próximos N días y los atrasados.",
+                 pro.ProximosHitosArgs, pro.proximos_hitos, "lectura", 1, "bajo", f({P})),
+        ToolSpec("actualizar_hito", "Cambia estado, fecha o notas de un hito/entregable.",
+                 pro.ActualizarHitoArgs, pro.actualizar_hito, "interna", 2, "bajo", f({P})),
+        ToolSpec("agendar_evento", "Crea un evento en el calendario e invita al cliente. EFECTO EXTERNO.",
+                 pro.AgendarEventoArgs, pro.agendar_evento, "externa", 3, "medio", f({P})),
     ]
     return {s.name: s for s in specs}

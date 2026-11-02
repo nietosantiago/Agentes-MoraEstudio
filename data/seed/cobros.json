@@ -1,0 +1,7 @@
+[
+  {"id": "COB-01", "cliente_id": "CLI-02", "presupuesto_id": "PRE-2026-031", "concepto": "Seña 50%", "monto": 1340000, "vencimiento": "2026-09-15", "estado": "cobrado", "factura_numero": "C-0001-00000010", "cobrado_en": "2026-09-15", "ultimo_recordatorio": null},
+  {"id": "COB-02", "cliente_id": "CLI-02", "presupuesto_id": "PRE-2026-031", "concepto": "Saldo 50% contra entrega", "monto": 1340000, "vencimiento": "2026-11-15", "estado": "pendiente", "factura_numero": null, "cobrado_en": null, "ultimo_recordatorio": null},
+  {"id": "COB-03", "cliente_id": "CLI-03", "presupuesto_id": null, "concepto": "Saldo proyecto oficinas", "monto": 450000, "vencimiento": "2026-10-20", "estado": "pendiente", "factura_numero": "C-0001-00000012", "cobrado_en": null, "ultimo_recordatorio": "2026-10-23"},
+  {"id": "COB-04", "cliente_id": "CLI-01", "presupuesto_id": "PRE-2026-036", "concepto": "Seña 50%", "monto": 425000, "vencimiento": "2026-10-08", "estado": "cobrado", "factura_numero": "C-0001-00000011", "cobrado_en": "2026-10-08", "ultimo_recordatorio": null},
+  {"id": "COB-05", "cliente_id": "CLI-01", "presupuesto_id": "PRE-2026-036", "concepto": "Saldo 50% contra entrega", "monto": 425000, "vencimiento": "2026-12-04", "estado": "pendiente", "factura_numero": null, "cobrado_en": null, "ultimo_recordatorio": null}
+]

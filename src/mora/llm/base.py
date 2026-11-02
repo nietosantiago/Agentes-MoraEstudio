@@ -1,4 +1,4 @@
-"""Abstracción de proveedor (C3/C4): los agentes programan contra una interfaz, no contra Gemini."""
+"""Abstracción de proveedor: el sistema programa contra una interfaz, no contra Gemini."""
 from __future__ import annotations
 
 from typing import Protocol, TypeVar
@@ -18,12 +18,12 @@ class LLMProvider(Protocol):
     name: str
 
     def generate_structured(self, *, system: str, prompt: str, schema: type[T]) -> T:
-        """Devuelve una instancia validada de `schema` o levanta LLMError."""
+        """Devuelve una instancia validada de `schema` o levanta LLMError. Reporta uso con tracing.report_usage."""
         ...
 
 
 def get_provider(settings: Settings) -> LLMProvider | None:
-    """None = modo local determinístico (los agentes usan reglas/plantillas)."""
+    """None = modo local (reglas): sin API key, determinístico, base para tests y baseline de evaluación."""
     if settings.llm == "gemini":
         from .gemini import GeminiProvider
 

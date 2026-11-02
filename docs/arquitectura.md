@@ -1,140 +1,115 @@
-# Arquitectura y orquestación — Sistema de agentes de Mora Estudio
+# Arquitectura y decisiones técnicas
 
-> Base conceptual: curso ITBA *AI Agent Developer* (Clases 1–13). Cada decisión cita la clase de la que sale.
+> Fuente de verdad del alcance: [`contexto_tfi.md`](contexto_tfi.md). Este documento describe cómo está implementado y por qué.
 
-## 1. Problema y alcance
+## 1. Capas
 
-Mora Estudio (arquitectura y diseño) recibe consultas por email, WhatsApp y web. Hoy el equipo las responde a mano y tiene que buscar en documentos, agenda y tarifario. El sistema:
+```
+┌──────────────────────────────────────────────────────────┐
+│ Interfaz: FastAPI + UI mínima (src/mora/api.py, static/) │  + CLI (mora chat / eval-router)
+├──────────────────────────────────────────────────────────┤
+│ Grafo LangGraph: router + 4 agentes + HITL + ejecutor    │  src/mora/graph.py
+├──────────────────────────────────────────────────────────┤
+│ Tools por agente + Policy Gate + integraciones           │  src/mora/tools/, integrations/
+│   facturación (interfaz; mock hasta elegir API)          │
+├──────────────────────────────────────────────────────────┤
+│ Postgres (Supabase) o SQLite: datos del estudio,         │  src/mora/schema.sql, db.py
+│ checkpoints del grafo y ledger de efectos                │
+└──────────────────────────────────────────────────────────┘
+  Skill transversal: identidad de marca (skills/identidad-marca)
+```
 
-| Proceso | Qué automatiza | Qué **no** automatiza |
-|---|---|---|
-| Atención / consultas | Clasificar, juntar evidencia y redactar el borrador | Enviar sin aprobación humana |
-| Gestión de documentos | Encontrar fragmentos relevantes con su fuente (RAG) | Mostrar documentos de un cliente a otro |
-| Agenda y vencimientos | Hitos próximos, horarios libres, proponer eventos | Crear eventos sin aprobación |
-| Presupuestos / reportes | Calcular honorarios con el tarifario vigente | Comprometer descuentos (nivel 4) |
+## 2. ¿Por qué multiagente? (requisito B)
 
-## 2. ¿Un agente o varios? (C12)
+Los cuatro roles tienen **herramientas distintas, permisos distintos y niveles de riesgo distintos** (ver la tabla de tools en [`agentes.md`](agentes.md)). Emitir una factura (riesgo alto, irreversible) no es lo mismo que sugerir un post (riesgo medio) o consultar hitos (lectura). Esa separación está en el código, no solo en los prompts:
 
-Arrancamos de la pregunta de C12: *¿qué separación reduce complejidad de verdad?* Hay cuatro motivos concretos:
+- `ToolPolicy.lectura(agente)` / `propuesta(agente)`: cada agente ve y puede proponer **solo** sus tools.
+- Un agente que intenta usar una tool ajena recibe `PolicyError` como observación (hay test).
+- El riesgo y el "efecto externo" de una acción los calcula el **registry**, no el LLM.
 
-1. **Permisos distintos**: presupuestos lee el tarifario, agenda lee el calendario y atención no lee fuentes por su cuenta. Separarlos aísla permisos (C9 Policy).
-2. **Contextos distintos**: el informe de obra de un cliente no tiene que entrar al contexto de un presupuesto ni al de otro cliente.
-3. **Paralelismo real**: documental y agenda (o presupuestos y documental) no dependen entre sí y corren en fan-out.
-4. **Evaluación independiente**: el crítico verifica montos y políticas con una rúbrica propia.
+Con un agente único con 24 tools, el modelo vería tools de facturación al redactar un post, y el riesgo de la acción dependería de su criterio.
 
-Lo que **no** separamos: triage y supervisor son funciones determinísticas, con LLM opcional. No son "agentes" autónomos. Sin una razón clara, no sumamos agentes.
-
-## 3. Patrones usados
-
-| N.º (C12) | Patrón | Dónde |
-|---|---|---|
-| 01 | **Router** | `triage`: intención → plan |
-| 04 + 03 | **Supervisor–Workers con Fan-out/Fan-in** | `plan` → `Send(worker)×N` → `consolidate` |
-| 07 | **Generator–Critic** | `consolidate ⇄ critic` (máx. `max_revisiones`) |
-| 06 | **Handoff a humano** | Reclamos: `escalar_a_humano=true` |
-| C11 | **Prepare → Decide → Policy → Execute** | `prepare` → `review(interrupt)` → `policy` → `execute` |
-
-## 4. Grafo de orquestación (LangGraph)
+## 3. El grafo
 
 ```mermaid
 flowchart TD
-    START((inicio)) --> intake[intake<br/>valida solicitud + memoria del cliente]
-    intake --> triage[triage · Router<br/>intención, urgencia, cliente/proyecto]
-    triage --> plan[supervisor<br/>plan + validate_plan]
-    plan -- Send x N --> W1[worker: documental]
-    plan -- Send x N --> W2[worker: agenda]
-    plan -- Send x N --> W3[worker: presupuestos]
-    plan -- sin tareas --> cons
-    W1 & W2 & W3 -- fan-in · operator.add --> cons[atención · consolidador<br/>Skill + evidencia]
-    cons --> critic{critic<br/>rúbrica}
-    critic -- observaciones y quedan revisiones --> cons
-    critic -- ok --> prep[prepare<br/>Propuesta v1 + PendingActions]
-    prep --> review[[review · interrupt<br/>HUMANO: approve / edit / reject]]
-    review -- edit / hash viejo --> review
-    review -- reject --> rej[rejected] --> END((fin))
-    review -- approve --> pol[policy gate<br/>re-autoriza cada acción]
-    pol --> exe[execute<br/>ledger idempotente]
-    exe --> mem[remember<br/>write gate de memoria] --> END
+    S((inicio)) --> CC[carga_contexto<br/>marca + cliente activo]
+    CC --> R{router<br/>agente + confianza + justificación + subpedidos}
+    R -- confianza bajo el umbral --> AC[[aclaracion<br/>interrupt: la diseñadora elige]]
+    R -- Send x 1..3 --> COM[comercial] & CON[contenidos] & ADM[administrativo<br/>PLATA] & PRO[proyectos<br/>TIEMPO]
+    AC -- Send --> COM & CON & ADM & PRO
+    COM & CON & ADM & PRO --> CO[consolidador<br/>una respuesta + una acción]
+    CO -- solo informativa --> FIN((END))
+    CO -- accion_pendiente --> REV[[revision<br/>interrupt: aprobar / modificar / rechazar]]
+    REV -- modificado: nueva ronda con la corrección --> COM & CON & ADM & PRO
+    REV -- rechazado --> FIN
+    REV -- aprobado --> EJ[ejecutor<br/>policy + idempotencia]
+    EJ --> FIN
 ```
 
-Código: `src/mora/graph.py`. Fachada: `src/mora/service.py` (`start`, `get`, `decide`).
+**Aristas condicionales** (las 3 del documento, más la delegación):
+1. `salida_router`: si `confianza_router < MORA_UMBRAL_ROUTER` (0,6) → `aclaracion`; si no, **delegación**: un `Send` por subpedido (1 a 3 agentes, en paralelo), y cada agente recibe solo su subpedido más el pedido completo como contexto.
+2. `salida_consolidador`: si hay `accion_pendiente` → `revision`; si la respuesta es solo informativa → END.
+3. `salida_revision`: aprobado → `ejecutor`; modificado → **nueva ronda a los mismos agentes** con la corrección (único ciclo); rechazado → END; decisión con hash viejo → se vuelve a pedir y no se ejecuta.
 
-### Estado compartido mínimo (C12)
-`MoraState` guarda solo productos normalizados: `clasificacion`, `tasks`, `worker_outputs` (reducer `operator.add`), `respuesta`, `critica`, `propuesta`, `decision`, `resultados`, `trace` (reducer). Los workers reciben **solo** `task + solicitud + clasificacion` vía `Send`, nunca el historial completo.
+### Delegación y consolidación (arquitectura B: "mecanismo de delegación + consolidación de resultados")
+- **Delegación** (`agents/router.py`): el router parte el pedido en segmentos, rutea cada uno y agrupa los consecutivos del mismo agente. Un segmento sin señales ("y avisale") se pega al anterior. Solo es multi-intención si quedan ≥2 agentes distintos, todos con confianza ≥ umbral (máximo 3). En modo LLM, el structured output trae `subpedidos` y el runtime los valida.
+- **Fan-in**: los resultados de los agentes se acumulan en `resultados_agentes` (reducer propio que se reinicia en cada ronda).
+- **Consolidación** (`consolidacion.py`). Consolidar no es concatenar:
+  - una respuesta con una sección por área y **una sola acción** (una sola aprobación);
+  - se eliminan las operaciones duplicadas y se avisa si dos agentes le escriben a la misma persona;
+  - **cruce plata × tiempo**: si en el mismo pedido se cobra o factura a un cliente cuya obra se atrasa, se avisa, porque el saldo suele ser "contra entrega";
+  - **falla parcial**: si un agente falla, el resto sigue y la falla queda visible en "Para revisar".
+- Cada operación conserva el agente que la propuso, y el ejecutor la autoriza **contra ese agente**: una acción consolidada no amplía permisos.
+- En pedidos de una sola área, el consolidador pasa la propuesta sin cambios.
 
-### Durabilidad (C11)
-- **Checkpointer**: `SqliteSaver` (`data/runtime/checkpoints.sqlite`), con `thread_id = run_id`. Un run sobrevive al reinicio del proceso: `mora run` y `mora decide` son procesos distintos.
-- **Event log**: tabla `events` del ledger. Permite reconstruir quién decidió qué.
-- **Ledger de efectos**: `idempotency_key = run_id:action_id`, con reserva `in_progress` antes del efecto. Si se re-ejecuta `execute` (recovery o time travel), la acción queda como `skipped_duplicate`. Hay un test para esto.
-- **Outcome ambiguo**: si un efecto falla, queda `failed` en el ledger y **no** se reintenta solo.
+### Estado compartido (`EstadoEstudio`)
+Respeta el del documento (`messages`, `cliente_activo`, `agente_destino`, `confianza_router`, `accion_pendiente`, `decision_humana`, `trazas`) y suma solo lo necesario para operar:
 
-### Semántica de reanudación
-Cuando se reanuda, LangGraph vuelve a entrar al nodo que tiene `interrupt()`. Por eso `review` no tiene efectos y todo efecto vive en `execute`.
-
-## 5. Contratos (C2, C9, C12) — `src/mora/contracts.py`
-
-| Contrato | Entre | Campos clave |
-|---|---|---|
-| `SolicitudEntrante` | canal → sistema | contenido = **dato no confiable** |
-| `Clasificacion` | triage → supervisor | intención, urgencia, `cliente_id`/`proyecto_id` (**siempre salen del repo, nunca del LLM**) |
-| `WorkerTask` | supervisor → worker | `task_id`, rol permitido, objetivo, `success_criteria`, `depends_on`, `max_steps` |
-| `WorkerOutput` | worker → consolidador | `status` success/partial/failed, `evidence[]` con fuente, `proposed_actions[]`, `open_questions` |
-| `ConsolidatedAnswer` | atención → crítico/humano | `sources`, `contradictions`, `missing_information`, `skill`, `escalar_a_humano` |
-| `Critique` | crítico → grafo | `passed`, `critical_issues`, `rubric_scores` |
-| `Propuesta` | runtime → humano | versión, acciones, `proposal_hash` |
-| `HumanDecision` | humano → runtime | approve/edit/reject, `proposal_hash`, `edited_answer`, `approved_action_ids` |
-| `RunBudget` | runtime | `max_workers=3`, `max_parallel_workers=2`, `max_total_steps`, `max_revisiones` |
-
-## 6. Tools, Policy y autonomía (C9 + C11) — `src/mora/tools/`
-
-| Tool | Riesgo | Nivel | Puede leer | Puede proponer |
-|---|---|---|---|---|
-| `buscar_documentos` | read | 1 | documental, presupuestos | — |
-| `consultar_proyecto` | read | 1 | documental, agenda, presupuestos | — |
-| `listar_vencimientos` | read | 1 | agenda | — |
-| `calcular_honorarios` | read | 1 | presupuestos | — |
-| `registrar_presupuesto` | internal_write | 2 | — | presupuestos |
-| `crear_evento_agenda` | side_effect | 3 | — | agenda |
-| `enviar_respuesta` | side_effect | 3 | — | atención |
-| `comprometer_descuento` | side_effect | **4 – no delegable** | — | nadie |
-
-Hay tres preguntas separadas: **Registry** (¿qué existe?), **allowed_tools/can_propose** (¿qué puede este rol?) y **authorize_execution** (¿se ejecuta *esta* llamada?). La aprobación humana **no reemplaza** la policy: `policy` vuelve a validar el schema, el rol proponente, el nivel y el hash aprobado.
-
-**Aislamiento entre clientes**: `buscar_documentos` descarta cualquier documento con `proyecto_id` distinto del proyecto de la consulta. Los eventos internos u otros clientes no se usan como evidencia de agenda.
-
-## 7. Skills, contexto y memoria (C10)
-
-- **Skills** (`skills/*/SKILL.md`): discovery solo por frontmatter (`name`, `description`, `mora-intents`). El body se carga cuando se selecciona la Skill y los `references/` bajo demanda. Las Skills **no** dan permisos.
-  - `respuesta-cliente`, `presupuesto-honorarios` (+ política de descuentos), `gestion-reclamos`, `coordinar-reunion`.
-- **Memoria** (`memory/store.py`): scope por `cliente_id` (o el contacto, si es un lead), con *provenance* (`run_id`), `confidence` y TTL.
-  - *Write gate*: solo se escriben hechos de acciones **ejecutadas** después de la aprobación (por ejemplo, "Presupuesto PRES-… enviado", con TTL igual a la validez).
-  - *Retrieve gate*: no vencidos, solo del mismo cliente, top-k.
-  - La memoria **no es ground truth**: proyectos, agenda y tarifario se consultan siempre en su fuente.
-
-## 8. Retrieval (C5–C8)
-
-El contrato `Retriever.search(query, k, filters)` es independiente del backend. Hoy usa BM25 en memoria, con chunking por sección `##` y metadata del frontmatter (`proyecto_id`, `tipo`). La Fase 2 suma embeddings + Qdrant local y hybrid search con RRF detrás del mismo contrato, y se mide con Precision@k, Recall@k y MRR sobre un dataset de relevancia (C6).
-
-## 9. Modos de ejecución
-
-| Modo | `MORA_LLM` | Triage | Supervisor | Atención |
-|---|---|---|---|---|
-| Local determinístico | `local` | reglas | reglas | plantillas + Skill |
-| Gemini | `gemini` | structured output → fallback a reglas | plan LLM → `validate_plan` → fallback | Skill como system prompt → fallback a plantilla |
-
-En los dos modos, el runtime (no el LLM) define la identidad del cliente, las fuentes, los agentes participantes y el estado.
-
-## 10. Fallas parciales (C12)
-
-| Falla | Comportamiento |
+| Campo agregado | Para qué |
 |---|---|
-| Worker lanza excepción o timeout | `WorkerOutput(status=failed)`. La respuesta sale `partial` y la falla figura en `missing_information` |
-| Faltan datos (m², tipo) | `partial` con `open_questions`, que se le preguntan al cliente; no se estima |
-| Plan inválido | `PlanError` → fallback determinístico, o run sin tareas con error visible |
-| LLM caído o salida inválida | un retry de validación → fallback a reglas/plantillas |
-| Aprobación con hash viejo | `decision_stale` → vuelve a `review`, sin efecto |
-| Re-ejecución de `execute` | `skipped_duplicate` por ledger |
+| `thread_id` | forma parte de la clave de idempotencia (ver §6: bug real encontrado) |
+| `turno` | agrupar trazas por pedido dentro de una conversación |
+| `justificacion_router`, `metodo_router` | evaluación del router y auditoría (reglas / llm / humano) |
+| `correccion`, `cambios` | la modificación de la diseñadora que vuelve a los agentes (texto libre o edición de campos por índice) |
+| `tareas`, `ronda`, `resultados_agentes` | delegación (subpedidos), número de ronda y fan-in de resultados |
+| `resultado_ejecucion`, `estado` | qué se ejecutó, y el estado visible en la UI |
 
-## 11. Métricas a instrumentar (C6, C12)
+## 4. Decisiones técnicas
 
-Routing accuracy (triage), task completion rate, evidence coverage, tasa de aprobación sin edición, ediciones por run, latencia p50 por nodo, tokens/costo por run (modo Gemini) y duplicados evitados por el ledger. La comparación tiene que ser **contra un baseline de agente único** (C9) sobre el mismo dataset de solicitudes.
+| Decisión | Implementación | Por qué |
+|---|---|---|
+| **Checkpointing obligatorio** | `PostgresSaver` si `MORA_DATABASE_URL` es Postgres; `SqliteSaver` en desarrollo. `thread_id = <cliente>-<uuid>` | `interrupt()` necesita congelar y retomar el grafo. Hay test de reanudación desde "otro proceso" con SQLite y con Postgres |
+| **Router con structured output** | `DecisionRouter{agente, confianza, justificacion}`. Con Gemini usa `response_schema`; sin LLM, reglas ponderadas | La justificación alimenta la revisión manual de errores en el reporte de evaluación |
+| **Umbral → aclaración** | `aclaracion` hace `interrupt()` con los 2 candidatos más probables | Derivar mal con seguridad es peor que preguntar. Métrica clave: *error con confianza* |
+| **Identidad de marca = Skill** | `skills/identidad-marca/SKILL.md` en todas las llamadas; `references/` a demanda (criterios de presupuesto → administrativo, pilares → contenidos) | Poco contenido, estable, presente siempre: no va a un vector store |
+| **Precios = tabla + tool** | tabla `servicios` + `calcular_presupuesto` determinística | Los precios necesitan exactitud, no similitud semántica |
+| **RAG descartado** | no hay vector store en el TFI | Ver contexto §5. Si se retoma: presupuestos históricos con PGVector en el mismo Postgres |
+| **Base compartida** | un solo esquema (`schema.sql`) para todos los agentes | Si cada agente tuviera su fuente, cada uno inventaría por su lado |
+| **FastAPI, no WhatsApp** | `api.py` + `static/index.html` (bandeja de aprobación) | La aprobación de Meta puede tardar semanas y no suma nota. WhatsApp queda como extensión |
+| **Facturación detrás de interfaz** | `FacturacionProvider` + `MockFacturacion` (comprobantes marcados `MOCK`) | Permite avanzar sin haber elegido la API (pendiente §9) |
+| **Dos modos de agente** | `MORA_LLM=local` (reglas, sin API key) / `gemini` (agent loop) con fallback automático a local | Tests reproducibles, baseline para comparar y degradación controlada si el LLM falla |
+
+## 5. Qué cuenta como "efecto externo" (resuelve el pendiente §9)
+
+| Tipo | Ejemplos | Nivel | En el grafo |
+|---|---|---|---|
+| **lectura** | consultar hitos, cobros, precios, calendario de posts | 1 | el agente la usa directo; si no hay nada que ejecutar → END |
+| **interna** | registrar lead, actualizar hito, registrar cobro | 2 | se propone y pasa por revisión (riesgo *bajo*, badge "interno") |
+| **externa** | enviar mensaje a lead/cliente, enviar presupuesto, emitir factura, programar post, invitar a evento | 3 | se propone, **aprobación obligatoria**, riesgo medio/alto |
+| **no delegable** | aplicar descuentos | 4 | la policy lo rechaza aunque el LLM lo proponga |
+
+Regla: **los agentes no ejecutan nada**. Las internas también pasan por revisión en el TFI, porque así lo pide el documento y es lo más simple de defender. Si la clienta lo prefiere, el nivel 2 puede pasar a "automático + log" cambiando una línea en `ToolPolicy.autorizar`.
+
+## 6. Ejecución segura
+
+`ejecutor` (en `graph.py`), para cada operación de la acción aprobada:
+1. **Ledger** (`efectos`): si la `idempotency_key = thread:accion:operación` ya existe, la operación queda `duplicada_omitida`.
+2. **Re-autorización**: `ToolPolicy.autorizar` vuelve a validar agente, nivel, schema y **precondiciones de negocio** (por ejemplo: no facturar dos veces el mismo cobro, no facturar más que lo pendiente, no repetir un recordatorio de cobro antes de 7 días). La aprobación humana no reemplaza estas reglas.
+3. **Reserva + efecto**: se inserta `en_curso`, se ejecuta y se marca `ejecutada` o `fallida`. Una falla (por ejemplo, la API de facturación caída) queda visible y **no se reintenta sola**.
+
+> **Bug real encontrado en desarrollo**: la primera versión armaba la clave sin el `thread_id`, así que dos conversaciones con el mismo `accion_id` (`t1-proyectos`) se pisaban y la segunda acción quedaba omitida en silencio. Lo detectó la corrida end-to-end. Ahora tiene un test de regresión (`test_regresion_idempotencia_aislada_por_conversacion`).
+
+## 7. Trazabilidad
+
+Cada nodo está envuelto con `tracing.traced` y agrega a `trazas`: `turno, nodo, latencia_ms, llamadas_llm, tokens_in, tokens_out, costo_usd, modelo`, más datos propios del nodo (agente y confianza en el router, tools usadas, errores y modo en los agentes, resultados en el ejecutor). Los proveedores LLM reportan tokens a un `UsageMeter` por contexto. El costo se estima con precios configurables (`MORA_PRECIO_*`). La UI muestra la traza del turno y el acumulado de la conversación.

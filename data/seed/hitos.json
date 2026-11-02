@@ -1,0 +1,10 @@
+[
+  {"id": "HIT-01", "obra_id": "OBR-01", "nombre": "Relevamiento y medidas", "tipo": "hito", "fecha": "2026-10-05", "estado": "cumplido", "responsable": "diseñadora", "notas": null},
+  {"id": "HIT-02", "obra_id": "OBR-01", "nombre": "Moodboard y paleta", "tipo": "entregable", "fecha": "2026-10-20", "estado": "cumplido", "responsable": "diseñadora", "notas": null},
+  {"id": "HIT-03", "obra_id": "OBR-01", "nombre": "Planta de equipamiento", "tipo": "entregable", "fecha": "2026-11-06", "estado": "en_curso", "responsable": "diseñadora", "notas": null},
+  {"id": "HIT-04", "obra_id": "OBR-01", "nombre": "Renders living y cocina", "tipo": "entregable", "fecha": "2026-11-13", "estado": "pendiente", "responsable": "diseñadora", "notas": null},
+  {"id": "HIT-05", "obra_id": "OBR-01", "nombre": "Entrega final y lista de compras", "tipo": "hito", "fecha": "2026-12-04", "estado": "pendiente", "responsable": "diseñadora", "notas": null},
+  {"id": "HIT-06", "obra_id": "OBR-02", "nombre": "Compra de revestimientos", "tipo": "hito", "fecha": "2026-11-04", "estado": "pendiente", "responsable": "cliente", "notas": null},
+  {"id": "HIT-07", "obra_id": "OBR-02", "nombre": "Instalación muebles de cocina", "tipo": "hito", "fecha": "2026-11-18", "estado": "pendiente", "responsable": "Carpintería Litoral", "notas": null},
+  {"id": "HIT-08", "obra_id": "OBR-02", "nombre": "Entrega de obra", "tipo": "hito", "fecha": "2026-12-10", "estado": "pendiente", "responsable": "diseñadora", "notas": null}
+]
