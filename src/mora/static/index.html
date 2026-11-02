@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mora Estudio · Asistente</title>
+<style>
+  :root{--bg:#F7F3EE;--panel:#fff;--ink:#2F2F2F;--muted:#7a736b;--line:#e6ddd1;--acc:#B5654A;--ok:#5f7d52;--warn:#b5843a;--bad:#a8453a;--soft:#efe6da}
+  @media (prefers-color-scheme: dark){:root{--bg:#1d1b19;--panel:#262320;--ink:#ece6de;--muted:#a69d92;--line:#3a352f;--soft:#302b26}}
+  *{box-sizing:border-box} body{margin:0;font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--ink)}
+  header{display:flex;gap:12px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  header h1{font-size:17px;margin:0;font-weight:600} header .meta{color:var(--muted);font-size:13px}
+  main{display:grid;grid-template-columns:240px 1fr 340px;gap:0;height:calc(100vh - 53px)}
+  @media (max-width:980px){main{grid-template-columns:1fr;height:auto}}
+  aside,section{border-right:1px solid var(--line);overflow:auto;padding:12px}
+  .conv{padding:8px;border-radius:8px;cursor:pointer;margin-bottom:4px;font-size:14px}
+  .conv:hover,.conv.on{background:var(--soft)} .conv small{display:block;color:var(--muted)}
+  .chat{display:flex;flex-direction:column;gap:8px;min-height:50vh}
+  .msg{max-width:85%;padding:9px 12px;border-radius:12px;white-space:pre-wrap;background:var(--panel);border:1px solid var(--line)}
+  .msg.yo{align-self:flex-end;background:var(--acc);color:#fff;border:0} .msg.yo .who{color:#fbe9e1}
+  .msg .who{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px}
+  form.send{display:flex;gap:8px;margin-top:12px;position:sticky;bottom:0;background:var(--bg);padding:8px 0}
+  textarea,input,select{font:inherit;color:inherit;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px;width:100%}
+  button{font:inherit;border:0;border-radius:8px;padding:8px 12px;cursor:pointer;background:var(--soft);color:var(--ink)}
+  button.pri{background:var(--acc);color:#fff} button.ok{background:var(--ok);color:#fff} button.bad{background:var(--bad);color:#fff}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px}
+  .pill{display:inline-block;font-size:12px;padding:2px 8px;border-radius:99px;background:var(--soft);margin-right:4px}
+  .pill.alto{background:var(--bad);color:#fff}.pill.medio{background:var(--warn);color:#fff}.pill.bajo{background:var(--ok);color:#fff}
+  .op{border-top:1px dashed var(--line);padding-top:8px;margin-top:8px;font-size:14px}
+  .op textarea{min-height:110px;font-size:13px} .row{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+  table{width:100%;border-collapse:collapse;font-size:12px} td,th{text-align:left;padding:3px 4px;border-bottom:1px solid var(--line)}
+  .muted{color:var(--muted);font-size:13px} h3{font-size:14px;margin:0 0 8px}
+</style>
+</head>
+<body>
+<header><h1>Mora Estudio · Asistente</h1><span class="meta" id="salud"></span></header>
+<main>
+  <aside>
+    <div class="row" style="margin:0 0 10px"><select id="cliente"><option value="">General (sin cliente)</option></select>
+      <button class="pri" id="nueva">Nueva conversación</button></div>
+    <div id="convs"></div>
+  </aside>
+  <section>
+    <div class="chat" id="chat"><p class="muted">Creá o elegí una conversación. Ejemplos: “¿Qué entregas tengo esta semana?”, “Facturale el saldo a Martín Gómez”, “Armame el calendario de posts de diciembre”.</p></div>
+    <form class="send" id="form"><textarea id="texto" rows="2" placeholder="Escribí tu pedido…"></textarea><button class="pri">Enviar</button></form>
+  </section>
+  <aside id="panel"><p class="muted">Acá aparecen las acciones esperando tu aprobación y las trazas del turno.</p></aside>
+</main>
+<script>
+const $=s=>document.querySelector(s); let actual=null;
+const api=async(p,o={})=>{const r=await fetch(p,{headers:{"Content-Type":"application/json"},...o});const j=await r.json();if(!r.ok)throw new Error(j.detail||r.statusText);return j};
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+async function init(){const s=await api("/api/salud");$("#salud").textContent=`LLM: ${s.llm} · DB: ${s.db} · umbral router: ${s.umbral_router} · ${s.marca} · facturación: ${s.facturacion}`;
+  for(const c of await api("/api/clientes")){const o=document.createElement("option");o.value=c.id;o.textContent=c.nombre;$("#cliente").append(o)} await lista()}
+async function lista(){const cs=await api("/api/conversaciones");$("#convs").innerHTML=cs.map(c=>`<div class="conv ${c.thread_id===actual?"on":""}" data-id="${c.thread_id}">${esc(c.titulo)}<small>${esc(c.estado)} · ${esc(c.cliente_id||"general")}</small></div>`).join("");
+  document.querySelectorAll(".conv").forEach(d=>d.onclick=()=>abrir(d.dataset.id))}
+async function abrir(id){actual=id;render(await api(`/api/conversaciones/${id}`));lista()}
+function render(v){
+  $("#chat").innerHTML=v.mensajes.map(m=>`<div class="msg ${m.rol==="diseñadora"?"yo":""}"><div class="who">${esc(m.rol)}</div>${esc(m.texto).replace(/\*\*(.+?)\*\*/g,"<b>$1</b>")}</div>`).join("")||'<p class="muted">Conversación vacía.</p>';
+  let h=""; const p=v.pendiente;
+  if(p&&p.tipo==="aprobacion"){const a=p.accion;
+    h+=`<div class="card"><h3>Esperando tu aprobación</h3><div><span class="pill ${a.riesgo}">riesgo ${a.riesgo}</span>${a.efecto_externo?'<span class="pill">sale del estudio</span>':'<span class="pill">interno</span>'}<span class="pill">v${a.version}</span><span class="pill">${esc(a.agente)}</span></div>
+      <p><b>${esc(a.resumen)}</b></p><p class="muted">${esc(a.justificacion)}</p>`;
+    a.operaciones.forEach((o,i)=>{h+=`<div class="op"><b>${i+1}. ${esc(o.descripcion)}</b> <span class="muted">(${esc(o.tool)})</span>`;
+      const campo=["cuerpo"].find(k=>k in o.args); if(campo)h+=`<textarea data-i="${i}" data-k="${campo}">${esc(o.args[campo])}</textarea>`;
+      else h+=`<pre class="muted" style="white-space:pre-wrap">${esc(JSON.stringify(o.args,null,1)).slice(0,900)}</pre>`; h+=`</div>`});
+    h+=`<textarea id="corr" rows="2" placeholder="Corrección para el agente (opcional, para 'Modificar')" style="margin-top:8px"></textarea>
+      <div class="row"><button class="ok" id="ap">Aprobar</button><button id="mo">Modificar</button><button class="bad" id="re">Rechazar</button></div></div>`}
+  if(p&&p.tipo==="aclaracion"){h+=`<div class="card"><h3>¿A qué área va?</h3><p>${esc(p.pregunta)}</p><p class="muted">Router: ${esc(p.justificacion)} (confianza ${p.confianza})</p><div class="row">${p.opciones.map(o=>`<button class="${p.candidatos.includes(o)?"pri":""}" data-ag="${o}">${o}</button>`).join("")}</div></div>`}
+  if(v.resultado_ejecucion.length){h+=`<div class="card"><h3>Resultado</h3>${v.resultado_ejecucion.map(r=>`<div class="op">${esc(r.tool)}: <b>${esc(r.estado)}</b><div class="muted">${esc(r.detalle).slice(0,200)}</div></div>`).join("")}</div>`}
+  const r=v.router; if(r.agente)h+=`<div class="card"><h3>Router</h3>${esc(r.agente)} · confianza ${r.confianza} · ${esc(r.metodo)}<div class="muted">${esc(r.justificacion)}</div></div>`;
+  const t=v.resumen_conversacion; h+=`<div class="card"><h3>Trazas del turno</h3><table><tr><th>nodo</th><th>ms</th><th>tok in/out</th><th>US$</th></tr>${v.trazas_turno.map(x=>`<tr><td>${esc(x.nodo)}</td><td>${x.latencia_ms}</td><td>${x.tokens_in}/${x.tokens_out}</td><td>${x.costo_usd}</td></tr>`).join("")}</table><p class="muted">Conversación: ${t.latencia_ms} ms · ${t.tokens_in}/${t.tokens_out} tokens · US$ ${t.costo_usd}</p></div>`;
+  $("#panel").innerHTML=h;
+  if(p&&p.tipo==="aprobacion"){
+    const decidir=async(decision)=>{const cambios={};document.querySelectorAll("#panel textarea[data-i]").forEach(t=>{const o=p.accion.operaciones[+t.dataset.i];if(t.value!==o.args[t.dataset.k])cambios[t.dataset.i]={[t.dataset.k]:t.value}});
+      const body={decision,accion_hash:p.accion_hash,correccion:$("#corr").value,cambios};
+      if(decision==="aprobado"&&Object.keys(cambios).length){body.decision="modificado"}
+      try{render(await api(`/api/conversaciones/${actual}/decision`,{method:"POST",body:JSON.stringify(body)}));lista()}catch(e){alert(e.message)}};
+    $("#ap").onclick=()=>decidir("aprobado");$("#mo").onclick=()=>decidir("modificado");$("#re").onclick=()=>decidir("rechazado")}
+  document.querySelectorAll("[data-ag]").forEach(b=>b.onclick=async()=>{render(await api(`/api/conversaciones/${actual}/aclaracion`,{method:"POST",body:JSON.stringify({agente:b.dataset.ag})}));lista()});
+  $("#chat").scrollTop=1e9}
+$("#nueva").onclick=async()=>{const {thread_id}=await api("/api/conversaciones",{method:"POST",body:JSON.stringify({cliente_id:$("#cliente").value||null})});await abrir(thread_id)};
+$("#form").onsubmit=async e=>{e.preventDefault();const t=$("#texto").value.trim();if(!t)return;if(!actual){await $("#nueva").onclick()}$("#texto").value="";
+  try{render(await api(`/api/conversaciones/${actual}/mensajes`,{method:"POST",body:JSON.stringify({texto:t})}));lista()}catch(err){alert(err.message)}};
+$("#texto").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();$("#form").requestSubmit()}});
+init();
+</script>
+</body>
+</html>

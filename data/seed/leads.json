@@ -1,0 +1,5 @@
+[
+  {"id": "LEAD-01", "nombre": "Carla Benítez", "canal": "instagram", "contacto": "@carlabenitez.casa", "ciudad": "Santa Fe", "tipo_proyecto": "cocina", "presupuesto_estimado": 3000000, "mensaje": "Hola! Me encantó el proyecto de la cocina blanca. Quiero renovar la mía, ¿cómo trabajan?", "estado": "contactado", "calificacion": "A", "creado": "2026-10-22", "ultimo_contacto": "2026-10-25"},
+  {"id": "LEAD-02", "nombre": "Julián Paz", "canal": "whatsapp", "contacto": "+54 9 342 555-0404", "ciudad": "Paraná", "tipo_proyecto": "living", "presupuesto_estimado": null, "mensaje": "Buenas, quería consultar precios para decorar el living.", "estado": "nuevo", "calificacion": null, "creado": "2026-10-30", "ultimo_contacto": null},
+  {"id": "LEAD-03", "nombre": "Sofía Acuña", "canal": "email", "contacto": "sofia.acuna@example.com", "ciudad": "Santa Fe", "tipo_proyecto": "dormitorio", "presupuesto_estimado": 1500000, "mensaje": "Necesito ayuda con el dormitorio de mi hija.", "estado": "presupuestado", "calificacion": "B", "creado": "2026-10-20", "ultimo_contacto": "2026-10-28"}
+]
