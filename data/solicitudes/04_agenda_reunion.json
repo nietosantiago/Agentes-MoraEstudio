@@ -1,0 +1,7 @@
+{
+  "id": "SOL-0004",
+  "canal": "web",
+  "remitente": "martin.ruiz@example.com",
+  "asunto": "Reunión",
+  "cuerpo": "Hola, quisiera coordinar una reunión para hablar de una reforma de mi departamento."
+}

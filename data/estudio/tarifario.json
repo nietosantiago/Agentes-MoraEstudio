@@ -1,0 +1,21 @@
+{
+  "moneda": "USD",
+  "vigencia": "2026-S2",
+  "fuente": "Tarifario interno Mora Estudio 2026-S2",
+  "honorario_por_m2": {
+    "vivienda": 38,
+    "reforma": 30,
+    "local_comercial": 42,
+    "oficina": 35,
+    "interiorismo": 25
+  },
+  "etapas": {
+    "anteproyecto": 0.30,
+    "proyecto_ejecutivo": 0.40,
+    "direccion_obra": 0.30
+  },
+  "honorario_minimo": 2500,
+  "iva": 0.21,
+  "descuento_maximo_sin_aprobacion": 0.0,
+  "validez_dias": 30
+}
