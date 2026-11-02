@@ -17,6 +17,9 @@ Stack: Python · LangGraph · Pydantic · Gemini (opcional) · FastAPI · Postgr
 
 ## Inicio rápido (sin API key)
 
+Requiere **Python 3.11 a 3.14** (probado con 3.13). Con 3.15 algunas dependencias todavía no tienen versión precompilada y en Windows piden Visual C++. En Windows, creá el entorno con `py -3.13 -m venv .venv` y activalo con `.venv\Scripts\Activate.ps1`.
+
+
 ```bash
 python -m venv .venv && source .venv/bin/activate
 ```
