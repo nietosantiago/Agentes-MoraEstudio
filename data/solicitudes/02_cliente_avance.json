@@ -1,0 +1,7 @@
+{
+  "id": "SOL-0002",
+  "canal": "email",
+  "remitente": "laura.fernandez@example.com",
+  "asunto": "¿Cómo va el proyecto?",
+  "cuerpo": "Hola Sofía, ¿cómo viene el avance del proyecto de la casa? ¿Ya presentaron los planos en el municipio?"
+}

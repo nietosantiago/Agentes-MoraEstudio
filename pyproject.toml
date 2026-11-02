@@ -1,0 +1,29 @@
+[project]
+name = "mora-agentes"
+version = "0.1.0"
+description = "Sistema multiagente para Mora Estudio (diseño y arquitectura): atención, documentos, agenda y presupuestos."
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.7",
+    "langgraph>=1.0,<2",
+    "langgraph-checkpoint-sqlite>=3.0",
+    "google-genai>=1.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+mora = "mora.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
