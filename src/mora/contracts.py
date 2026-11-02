@@ -12,32 +12,49 @@ AGENTES: tuple[str, ...] = ("comercial", "contenidos", "administrativo", "proyec
 Riesgo = Literal["bajo", "medio", "alto"]
 
 
+class Subpedido(BaseModel):
+    agente: Agente
+    pedido: str = Field(min_length=2, max_length=500)
+
+
 class DecisionRouter(BaseModel):
-    """Structured output del router. La justificación no la usa el sistema: es para evaluar errores."""
+    """Structured output del router. La justificación no la usa el sistema: es para evaluar errores.
+
+    `subpedidos` (2-3) solo cuando el pedido mezcla tareas de áreas distintas; si está vacío, el
+    pedido completo va a `agente`.
+    """
 
     agente: Agente
     confianza: float = Field(ge=0, le=1)
     justificacion: str = Field(max_length=300)
+    subpedidos: list[Subpedido] = Field(default_factory=list, max_length=3)
     metodo: Literal["reglas", "llm", "humano"] = "reglas"
+
+    @property
+    def es_multiple(self) -> bool:
+        return len({s.agente for s in self.subpedidos}) >= 2
 
 
 class Operacion(BaseModel):
     tool: str
     args: dict[str, Any]
     descripcion: str
+    agente: Agente | None = None          # quién la propuso (la policy valida contra este agente)
 
 
 class AccionPendiente(BaseModel):
     """Lo que un agente PROPONE. Nunca lo ejecuta quien lo propone: lo ejecuta el nodo ejecutor."""
 
     accion_id: str
-    agente: Agente
+    agente: Agente | Literal["multiagente"]
     resumen: str
     justificacion: str = ""
     operaciones: list[Operacion] = Field(min_length=1)
     riesgo: Riesgo
     efecto_externo: bool
     version: int = 1
+    agentes: list[Agente] = Field(default_factory=list)
+    observaciones: list[str] = Field(default_factory=list)  # avisos del consolidador para la diseñadora
 
     @property
     def hash(self) -> str:

@@ -34,25 +34,34 @@ Con un agente único con 24 tools, el modelo vería tools de facturación al red
 ```mermaid
 flowchart TD
     S((inicio)) --> CC[carga_contexto<br/>marca + cliente activo]
-    CC --> R{router<br/>agente + confianza + justificación}
-    R -- confianza < umbral --> AC[[aclaracion<br/>interrupt: la diseñadora elige]]
-    AC --> COM & CON & ADM & PRO
-    R -- comercial --> COM[comercial]
-    R -- contenidos --> CON[contenidos]
-    R -- administrativo --> ADM[administrativo<br/>PLATA]
-    R -- proyectos --> PRO[proyectos<br/>TIEMPO]
-    COM & CON & ADM & PRO -- solo informativa --> FIN((END))
-    COM & CON & ADM & PRO -- accion_pendiente --> REV[[revision<br/>interrupt: aprobar / modificar / rechazar]]
-    REV -- modificado: vuelve con la corrección --> COM & CON & ADM & PRO
+    CC --> R{router<br/>agente + confianza + justificación + subpedidos}
+    R -- confianza bajo el umbral --> AC[[aclaracion<br/>interrupt: la diseñadora elige]]
+    R -- Send x 1..3 --> COM[comercial] & CON[contenidos] & ADM[administrativo<br/>PLATA] & PRO[proyectos<br/>TIEMPO]
+    AC -- Send --> COM & CON & ADM & PRO
+    COM & CON & ADM & PRO --> CO[consolidador<br/>una respuesta + una acción]
+    CO -- solo informativa --> FIN((END))
+    CO -- accion_pendiente --> REV[[revision<br/>interrupt: aprobar / modificar / rechazar]]
+    REV -- modificado: nueva ronda con la corrección --> COM & CON & ADM & PRO
     REV -- rechazado --> FIN
     REV -- aprobado --> EJ[ejecutor<br/>policy + idempotencia]
     EJ --> FIN
 ```
 
-**Aristas condicionales** (las 3 del documento):
-1. `salida_router`: según `agente_destino`, o `aclaracion` si `confianza_router < MORA_UMBRAL_ROUTER` (0,6).
-2. `salida_agente`: si hay `accion_pendiente` va a `revision`; si la respuesta es solo informativa, termina (END).
-3. `salida_revision`: aprobado → `ejecutor`; modificado → **vuelve al agente** (único ciclo); rechazado → END. Si la decisión viene con el hash de una versión vieja, se vuelve a pedir y no se ejecuta.
+**Aristas condicionales** (las 3 del documento, más la delegación):
+1. `salida_router`: si `confianza_router < MORA_UMBRAL_ROUTER` (0,6) → `aclaracion`; si no, **delegación**: un `Send` por subpedido (1 a 3 agentes, en paralelo), y cada agente recibe solo su subpedido más el pedido completo como contexto.
+2. `salida_consolidador`: si hay `accion_pendiente` → `revision`; si la respuesta es solo informativa → END.
+3. `salida_revision`: aprobado → `ejecutor`; modificado → **nueva ronda a los mismos agentes** con la corrección (único ciclo); rechazado → END; decisión con hash viejo → se vuelve a pedir y no se ejecuta.
+
+### Delegación y consolidación (arquitectura B: "mecanismo de delegación + consolidación de resultados")
+- **Delegación** (`agents/router.py`): el router parte el pedido en segmentos, rutea cada uno y agrupa los consecutivos del mismo agente. Un segmento sin señales ("y avisale") se pega al anterior. Solo es multi-intención si quedan ≥2 agentes distintos, todos con confianza ≥ umbral (máximo 3). En modo LLM, el structured output trae `subpedidos` y el runtime los valida.
+- **Fan-in**: los resultados de los agentes se acumulan en `resultados_agentes` (reducer propio que se reinicia en cada ronda).
+- **Consolidación** (`consolidacion.py`). Consolidar no es concatenar:
+  - una respuesta con una sección por área y **una sola acción** (una sola aprobación);
+  - se eliminan las operaciones duplicadas y se avisa si dos agentes le escriben a la misma persona;
+  - **cruce plata × tiempo**: si en el mismo pedido se cobra o factura a un cliente cuya obra se atrasa, se avisa, porque el saldo suele ser "contra entrega";
+  - **falla parcial**: si un agente falla, el resto sigue y la falla queda visible en "Para revisar".
+- Cada operación conserva el agente que la propuso, y el ejecutor la autoriza **contra ese agente**: una acción consolidada no amplía permisos.
+- En pedidos de una sola área, el consolidador pasa la propuesta sin cambios.
 
 ### Estado compartido (`EstadoEstudio`)
 Respeta el del documento (`messages`, `cliente_activo`, `agente_destino`, `confianza_router`, `accion_pendiente`, `decision_humana`, `trazas`) y suma solo lo necesario para operar:
@@ -62,7 +71,8 @@ Respeta el del documento (`messages`, `cliente_activo`, `agente_destino`, `confi
 | `thread_id` | forma parte de la clave de idempotencia (ver §6: bug real encontrado) |
 | `turno` | agrupar trazas por pedido dentro de una conversación |
 | `justificacion_router`, `metodo_router` | evaluación del router y auditoría (reglas / llm / humano) |
-| `correccion`, `cambios` | la modificación de la diseñadora que vuelve al agente (texto libre o edición de campos) |
+| `correccion`, `cambios` | la modificación de la diseñadora que vuelve a los agentes (texto libre o edición de campos por índice) |
+| `tareas`, `ronda`, `resultados_agentes` | delegación (subpedidos), número de ronda y fan-in de resultados |
 | `resultado_ejecucion`, `estado` | qué se ejecutó, y el estado visible en la UI |
 
 ## 4. Decisiones técnicas

@@ -29,6 +29,8 @@
   .op textarea{min-height:110px;font-size:13px} .row{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
   table{width:100%;border-collapse:collapse;font-size:12px} td,th{text-align:left;padding:3px 4px;border-bottom:1px solid var(--line)}
   .muted{color:var(--muted);font-size:13px} h3{font-size:14px;margin:0 0 8px}
+  .obs{background:var(--soft);border-left:3px solid var(--warn);padding:6px 10px;border-radius:6px;font-size:13px;margin:8px 0}
+  .obs ul{margin:4px 0 0 16px;padding:0}
 </style>
 </head>
 <body>
@@ -58,16 +60,17 @@ function render(v){
   $("#chat").innerHTML=v.mensajes.map(m=>`<div class="msg ${m.rol==="diseñadora"?"yo":""}"><div class="who">${esc(m.rol)}</div>${esc(m.texto).replace(/\*\*(.+?)\*\*/g,"<b>$1</b>")}</div>`).join("")||'<p class="muted">Conversación vacía.</p>';
   let h=""; const p=v.pendiente;
   if(p&&p.tipo==="aprobacion"){const a=p.accion;
-    h+=`<div class="card"><h3>Esperando tu aprobación</h3><div><span class="pill ${a.riesgo}">riesgo ${a.riesgo}</span>${a.efecto_externo?'<span class="pill">sale del estudio</span>':'<span class="pill">interno</span>'}<span class="pill">v${a.version}</span><span class="pill">${esc(a.agente)}</span></div>
+    h+=`<div class="card"><h3>Esperando tu aprobación</h3><div><span class="pill ${a.riesgo}">riesgo ${a.riesgo}</span>${a.efecto_externo?'<span class="pill">sale del estudio</span>':'<span class="pill">interno</span>'}<span class="pill">v${a.version}</span>${(a.agentes&&a.agentes.length?a.agentes:[a.agente]).map(g=>`<span class="pill">${esc(g)}</span>`).join("")}</div>
       <p><b>${esc(a.resumen)}</b></p><p class="muted">${esc(a.justificacion)}</p>`;
-    a.operaciones.forEach((o,i)=>{h+=`<div class="op"><b>${i+1}. ${esc(o.descripcion)}</b> <span class="muted">(${esc(o.tool)})</span>`;
+    if(a.observaciones&&a.observaciones.length)h+=`<div class="obs"><b>Para revisar</b><ul>${a.observaciones.map(o=>`<li>${esc(o)}</li>`).join("")}</ul></div>`;
+    a.operaciones.forEach((o,i)=>{h+=`<div class="op"><b>${i+1}. ${esc(o.descripcion)}</b> <span class="muted">(${esc(o.agente||a.agente)} · ${esc(o.tool)})</span>`;
       const campo=["cuerpo"].find(k=>k in o.args); if(campo)h+=`<textarea data-i="${i}" data-k="${campo}">${esc(o.args[campo])}</textarea>`;
       else h+=`<pre class="muted" style="white-space:pre-wrap">${esc(JSON.stringify(o.args,null,1)).slice(0,900)}</pre>`; h+=`</div>`});
     h+=`<textarea id="corr" rows="2" placeholder="Corrección para el agente (opcional, para 'Modificar')" style="margin-top:8px"></textarea>
       <div class="row"><button class="ok" id="ap">Aprobar</button><button id="mo">Modificar</button><button class="bad" id="re">Rechazar</button></div></div>`}
   if(p&&p.tipo==="aclaracion"){h+=`<div class="card"><h3>¿A qué área va?</h3><p>${esc(p.pregunta)}</p><p class="muted">Router: ${esc(p.justificacion)} (confianza ${p.confianza})</p><div class="row">${p.opciones.map(o=>`<button class="${p.candidatos.includes(o)?"pri":""}" data-ag="${o}">${o}</button>`).join("")}</div></div>`}
   if(v.resultado_ejecucion.length){h+=`<div class="card"><h3>Resultado</h3>${v.resultado_ejecucion.map(r=>`<div class="op">${esc(r.tool)}: <b>${esc(r.estado)}</b><div class="muted">${esc(r.detalle).slice(0,200)}</div></div>`).join("")}</div>`}
-  const r=v.router; if(r.agente)h+=`<div class="card"><h3>Router</h3>${esc(r.agente)} · confianza ${r.confianza} · ${esc(r.metodo)}<div class="muted">${esc(r.justificacion)}</div></div>`;
+  const r=v.router; if(r.agente)h+=`<div class="card"><h3>Router</h3>${esc((v.delegacion&&v.delegacion.length>1)?v.delegacion.join(" + "):r.agente)} · confianza ${r.confianza} · ${esc(r.metodo)}<div class="muted">${esc(r.justificacion)}</div></div>`;
   const t=v.resumen_conversacion; h+=`<div class="card"><h3>Trazas del turno</h3><table><tr><th>nodo</th><th>ms</th><th>tok in/out</th><th>US$</th></tr>${v.trazas_turno.map(x=>`<tr><td>${esc(x.nodo)}</td><td>${x.latencia_ms}</td><td>${x.tokens_in}/${x.tokens_out}</td><td>${x.costo_usd}</td></tr>`).join("")}</table><p class="muted">Conversación: ${t.latencia_ms} ms · ${t.tokens_in}/${t.tokens_out} tokens · US$ ${t.costo_usd}</p></div>`;
   $("#panel").innerHTML=h;
   if(p&&p.tipo==="aprobacion"){

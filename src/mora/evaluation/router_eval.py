@@ -4,6 +4,9 @@ Cada caso termina en uno de tres resultados:
 - correcto:        derivó al agente esperado con confianza >= umbral (o preguntó cuando se esperaba aclaración)
 - aclaracion:      la confianza no llegó al umbral y el sistema preguntó (costo: un paso más para la usuaria)
 - error_confiado:  derivó a otro agente con confianza >= umbral. ES EL PEOR CASO: el pedido termina mal.
+
+Casos multi-intención (`esperado: "multi"` + `agentes_esperados`): son correctos si el router delega
+exactamente a ese conjunto de agentes. Partir un pedido simple en varios cuenta como error con confianza.
 """
 from __future__ import annotations
 
@@ -20,7 +23,7 @@ from ..contracts import AGENTES
 from ..llm.base import LLMProvider
 from ..tracing import UsageMeter, _meter, costo_usd
 
-ETIQUETAS = list(AGENTES) + ["aclaracion"]
+ETIQUETAS = list(AGENTES) + ["aclaracion", "multi"]
 
 
 def cargar_dataset(path: Path) -> list[dict]:
@@ -46,16 +49,24 @@ def evaluar(dataset: list[dict], settings: Settings, llm: LLMProvider | None = N
         finally:
             _meter.reset(tok)
         lat = (time.perf_counter() - t0) * 1000
-        pred = d.agente if d.confianza >= settings.umbral_router else "aclaracion"
+        if d.confianza < settings.umbral_router:
+            pred = "aclaracion"
+        elif d.es_multiple:
+            pred = "multi"
+        else:
+            pred = d.agente
         esperado = caso["esperado"]
-        if pred == esperado:
+        delegados = sorted({x.agente for x in d.subpedidos}) if d.es_multiple else [d.agente]
+        if esperado == "multi" and pred == "multi":
+            resultado = "correcto" if delegados == sorted(caso.get("agentes_esperados", [])) else "error_confiado"
+        elif pred == esperado:
             resultado = "correcto"
         elif pred == "aclaracion":
             resultado = "aclaracion"
         else:
             resultado = "error_confiado"
         filas.append({**caso, "predicho": pred, "agente_router": d.agente, "confianza": d.confianza,
-                      "justificacion": d.justificacion, "metodo": d.metodo, "resultado": resultado,
+                      "justificacion": d.justificacion, "metodo": d.metodo, "resultado": resultado, "delegados": delegados,
                       "latencia_ms": round(lat, 2), "tokens_in": meter.tokens_in, "tokens_out": meter.tokens_out,
                       "costo_usd": costo_usd(settings, meter.tokens_in, meter.tokens_out)})
 
@@ -73,6 +84,7 @@ def evaluar(dataset: list[dict], settings: Settings, llm: LLMProvider | None = N
         por_clase[c] = {"soporte": real_c, "precision": round(tp / pred_c, 3) if pred_c else None,
                         "recall": round(tp / real_c, 3) if real_c else None}
     frontera = [f for f in filas if {f["esperado"], f["predicho"]} == {"administrativo", "proyectos"}]
+    multi = [f for f in filas if f["esperado"] == "multi"]
     lats = [f["latencia_ms"] for f in filas]
     return {
         "fecha": datetime.now().isoformat(timespec="seconds"),
@@ -82,6 +94,8 @@ def evaluar(dataset: list[dict], settings: Settings, llm: LLMProvider | None = N
         "tasa_error_confiado": round(cuenta["error_confiado"] / n, 3) if n else 0,
         "accuracy_limitrofes": round(sum(f["resultado"] == "correcto" for f in lim) / len(lim), 3) if lim else None,
         "confusiones_admin_proyectos": len(frontera),
+        "accuracy_multi": (round(sum(f["resultado"] == "correcto" for f in multi) / len(multi), 3) if multi else None),
+        "pedidos_simples_partidos": sum(1 for f in filas if f["esperado"] != "multi" and f["predicho"] == "multi"),
         "por_clase": por_clase, "matriz_confusion": matriz,
         "latencia_ms": {"p50": _pct(lats, 50), "p95": _pct(lats, 95), "media": round(statistics.mean(lats), 2) if lats else 0},
         "tokens": {"in": sum(f["tokens_in"] for f in filas), "out": sum(f["tokens_out"] for f in filas)},
@@ -100,6 +114,8 @@ def reporte_markdown(r: dict) -> str:
          f"| **Error con confianza** (derivó mal sin preguntar) | **{r['tasa_error_confiado']:.1%}** |",
          f"| Accuracy en casos limítrofes | {r['accuracy_limitrofes']:.1%} |" if r["accuracy_limitrofes"] is not None else "",
          f"| Confusiones administrativo ↔ proyectos | {r['confusiones_admin_proyectos']} |",
+         f"| Multi-intención: delegó al conjunto correcto | {r['accuracy_multi']:.1%} |" if r.get("accuracy_multi") is not None else "",
+         f"| Pedidos simples partidos por error | {r.get('pedidos_simples_partidos', 0)} |",
          f"| Latencia p50 / p95 | {r['latencia_ms']['p50']} / {r['latencia_ms']['p95']} ms |",
          f"| Tokens in / out | {r['tokens']['in']} / {r['tokens']['out']} |",
          f"| Costo total / por consulta | US$ {r['costo_usd']['total']} / {r['costo_usd']['por_consulta']} |",

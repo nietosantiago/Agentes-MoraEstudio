@@ -34,3 +34,7 @@
 {"id": "R34", "texto": "¿Cuándo?", "esperado": "aclaracion", "limitrofe": true, "nota": "sin contenido: debe preguntar"}
 {"id": "R35", "texto": "Fijate lo de Gómez", "esperado": "aclaracion", "limitrofe": true, "nota": "ambiguo: obra o plata"}
 {"id": "R36", "texto": "Necesito ordenar la semana", "esperado": "aclaracion", "limitrofe": true, "nota": "ambiguo"}
+{"id": "R37", "texto": "Facturale el saldo a Martín Gómez y avisale que se atrasan los muebles de cocina", "esperado": "multi", "agentes_esperados": ["administrativo", "proyectos"], "limitrofe": true, "nota": "plata + tiempo en el mismo pedido"}
+{"id": "R38", "texto": "¿Qué entregas tengo esta semana? Y además decime quién me debe plata", "esperado": "multi", "agentes_esperados": ["proyectos", "administrativo"], "limitrofe": false}
+{"id": "R39", "texto": "Armame el calendario de posts de diciembre y haceme el seguimiento de los leads que no contestaron", "esperado": "multi", "agentes_esperados": ["contenidos", "comercial"], "limitrofe": false}
+{"id": "R40", "texto": "Marcá como cumplida la planta de equipamiento de Valentina y facturale el saldo", "esperado": "multi", "agentes_esperados": ["proyectos", "administrativo"], "limitrofe": true, "nota": "cierre de entregable dispara cobro"}

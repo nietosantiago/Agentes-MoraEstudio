@@ -14,7 +14,7 @@ def test_informativo_termina_sin_revision(svc, deps):
     th, v = conversar(svc, "¿Cuánto facturé en octubre?")
     assert v["estado"] == "informativo" and v["pendiente"] is None
     assert "$ 1.125.000" in v["mensajes"][-1]["texto"]
-    assert v["resumen_turno"]["nodos"] == ["carga_contexto", "router", "administrativo"]
+    assert v["resumen_turno"]["nodos"] == ["carga_contexto", "router", "administrativo", "consolidador"]
     assert salientes(deps) == []
 
 

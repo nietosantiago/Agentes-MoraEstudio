@@ -48,8 +48,8 @@ Como el código va adelantado, conviene usar el margen en lo que pesa en la nota
 | 6. Interfaz accesible | ✅ | — |
 | 7. Ejecución reproducible | 🟡 | Procedimiento venv verificado en Windows. **Probar `docker compose`** |
 | 8. Evidencia de calidad | 🟡 | Evaluar con Gemini vs. reglas sobre un **dataset real** |
-| Arquitectura B: "consolidación de resultados" | 🟡 | El router delega a un solo agente. **Decidir**: consolidación multi-intención (recomendado) o justificación escrita |
+| Arquitectura B: "delegación + consolidación de resultados" | ✅ | Router con subpedidos, `Send` en paralelo y nodo consolidador (`consolidacion.py`) |
 | Repositorio accesible + tag `v1.0-tfi` | ❌ | Arreglar el acceso a GitHub; el tag se crea al final |
-| README con las 13 secciones | 🟡 | Faltan Integrantes, Problema, Usuario, diagrama en el README, resultados de evaluación, Limitaciones y justificación del modelo |
+| README con las 13 secciones | ✅ | Actualizar los resultados de evaluación cuando estén el dataset real y Gemini. Confirmar integrantes |
 | Video de 3–5 min (recomendado) | ❌ | Problema → decisión agéntica → tool → HITL → resultado |
 | Formulario: nombre, integrantes, URLs, descripción (≤5 líneas) | ❌ | Al final |

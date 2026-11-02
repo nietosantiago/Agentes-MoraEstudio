@@ -112,6 +112,7 @@ class MoraService:
             "thread_id": thread_id, "estado": estado, "pendiente": pendiente, "mensajes": mensajes,
             "router": {"agente": v.get("agente_destino"), "confianza": v.get("confianza_router"),
                        "justificacion": v.get("justificacion_router"), "metodo": v.get("metodo_router")},
+            "delegacion": [t["agente"] for t in v.get("tareas", [])],
             "resultado_ejecucion": v.get("resultado_ejecucion", []),
             "trazas_turno": [t for t in v.get("trazas", []) if t.get("turno") == turno],
             "resumen_turno": resumen_trazas(v.get("trazas", []), turno),

@@ -6,7 +6,7 @@
 3. **End-to-end**: los tests de `tests/test_grafo.py` y `tests/test_api.py` cubren cada camino del grafo.
 
 ## Dataset del router — `eval/dataset_router.jsonl`
-36 casos: 7 comercial, 7 contenidos, 11 administrativo, 8 proyectos y 3 que deberían pedir aclaración. 16 están marcados como `limitrofe`, con una `nota` que explica por qué.
+40 casos: 7 comercial, 7 contenidos, 11 administrativo, 8 proyectos, 3 que deberían pedir aclaración y 4 **multi-intención** (`esperado: "multi"` + `agentes_esperados`). 18 están marcados como `limitrofe`, con una `nota` que explica por qué.
 
 > ⚠️ **Es un dataset semilla escrito por nosotros**, con las mismas personas que escribieron las reglas. Sirve para armar la herramienta, no como resultado final. El objetivo de la semana 3 es reemplazarlo o ampliarlo con **30–40 consultas reales de la clienta**, etiquetadas a mano.
 
@@ -15,6 +15,7 @@ Cada caso termina en **correcto**, **aclaración** (preguntó) o **error con con
 
 - accuracy, tasa de aclaración y tasa de error con confianza (suman 100%)
 - accuracy en limítrofes y cantidad de confusiones administrativo ↔ proyectos
+- multi-intención: si delegó exactamente al conjunto esperado, y cuántos pedidos simples se partieron por error
 - precision y recall por clase, matriz de confusión
 - latencia p50/p95, tokens in/out, costo total y por consulta
 - tabla de casos no correctos con la **justificación del router**, para revisión manual
@@ -26,13 +27,15 @@ Ver [`eval/reports/router_reglas_2026-11-02.md`](../eval/reports/router_reglas_2
 
 | Métrica | Valor |
 |---|---|
-| Accuracy | 91,7% |
-| Aclaración | 8,3% |
+| Accuracy | 92,5% |
+| Aclaración | 7,5% |
 | **Error con confianza** | **0%** |
-| Accuracy en limítrofes | 84,6% |
+| Accuracy en limítrofes | 86,7% |
 | Confusiones admin ↔ proyectos | 0 |
+| Multi-intención correcta | 4/4 |
+| Pedidos simples partidos por error | 0 |
 
-Los 3 casos no correctos son aclaraciones (el router dudó y preguntó), no errores. Por ejemplo, R13 "Quiero mostrar en Instagram la obra…": las reglas no tienen la palabra `instagram` como señal de contenidos. **No se corrigió a propósito**, para no sobreajustar las reglas al dataset que se usa para medir.
+Los 4 casos multi-intención se escribieron junto con el detector, así que su 4/4 también es optimista. Los 3 casos no correctos son aclaraciones (el router dudó y preguntó), no errores. Por ejemplo, R13 "Quiero mostrar en Instagram la obra…": las reglas no tienen la palabra `instagram` como señal de contenidos. **No se corrigió a propósito**, para no sobreajustar las reglas al dataset que se usa para medir.
 
 ## Experimento propuesto para la defensa
 Correr el mismo dataset (real) con `MORA_LLM=local` y con `MORA_LLM=gemini` y comparar accuracy, error con confianza, latencia y costo por consulta. Probar también 2 o 3 umbrales (0,5 / 0,6 / 0,7) para mostrar el *trade-off* entre preguntar de más y equivocarse.

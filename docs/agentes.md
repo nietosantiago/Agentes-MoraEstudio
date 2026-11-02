@@ -3,9 +3,12 @@
 Un agente = instrucciones (frontera + identidad de marca) + **sus** tools + contrato `ResultadoAgente` + límites. Todos leen la misma base y la misma Skill de marca.
 
 ## Router — `agents/router.py`
-- Salida: `DecisionRouter{agente, confianza, justificacion, metodo}`.
+- Salida: `DecisionRouter{agente, confianza, justificacion, subpedidos, metodo}`. `subpedidos` (2–3) solo si el pedido mezcla áreas.
 - Modo LLM: prompt con la frontera explícita y ejemplos limítrofes ("¿Cuándo me paga Gómez?" → administrativo; "¿Cuándo entrego los renders de Gómez?" → proyectos).
 - Modo reglas: señales ponderadas por dominio; `confianza = s1 / (s1 + s2 + 0,8)`, así que si dos dominios compiten la confianza baja y se pregunta.
+
+## Consolidador — `consolidacion.py`
+No es un agente con LLM: es un nodo determinístico que junta los resultados cuando el router delegó a varios agentes. Arma una respuesta, una acción y observaciones (duplicados, mismo destinatario, cruce plata × tiempo, fallas parciales). Ver [`arquitectura.md`](arquitectura.md#delegación-y-consolidación-arquitectura-b-mecanismo-de-delegación--consolidación-de-resultados).
 
 ## Frontera crítica: administrativo = PLATA, proyectos = TIEMPO
 Está escrita en el prompt del router y en la `frontera` de cada agente, y el código la refuerza: proyectos **no tiene** tools de cobros y administrativo **no tiene** tools de hitos. El dataset de evaluación incluye 7 casos limítrofes entre estos dos agentes.

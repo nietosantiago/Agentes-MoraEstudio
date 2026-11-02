@@ -109,7 +109,7 @@ class ToolPolicy:
 
     def autorizar(self, accion: AccionPendiente, op: Operacion, ctx: ToolContext, *, aprobada: bool) -> ToolSpec:
         """Se re-valida TODO antes del efecto: la aprobación humana no reemplaza la policy."""
-        spec = self.validar_operacion(accion.agente, op)
+        spec = self.validar_operacion(op.agente or accion.agente, op)
         if spec.nivel >= 2 and not aprobada:
             raise PolicyError(f"'{op.tool}' requiere aprobación de la diseñadora")
         if spec.precondicion:

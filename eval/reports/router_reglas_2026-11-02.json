@@ -1,13 +1,15 @@
 {
-  "fecha": "2026-11-02T15:21:40",
+  "fecha": "2026-11-02T16:41:16",
   "modo": "reglas",
   "umbral": 0.6,
-  "n": 36,
-  "accuracy": 0.917,
-  "tasa_aclaracion": 0.083,
+  "n": 40,
+  "accuracy": 0.925,
+  "tasa_aclaracion": 0.075,
   "tasa_error_confiado": 0.0,
-  "accuracy_limitrofes": 0.846,
+  "accuracy_limitrofes": 0.867,
   "confusiones_admin_proyectos": 0,
+  "accuracy_multi": 1.0,
+  "pedidos_simples_partidos": 0,
   "por_clase": {
     "comercial": {
       "soporte": 7,
@@ -33,6 +35,11 @@
       "soporte": 3,
       "precision": 0.5,
       "recall": 1.0
+    },
+    "multi": {
+      "soporte": 4,
+      "precision": 1.0,
+      "recall": 1.0
     }
   },
   "matriz_confusion": {
@@ -41,41 +48,54 @@
       "contenidos": 0,
       "administrativo": 0,
       "proyectos": 0,
-      "aclaracion": 1
+      "aclaracion": 1,
+      "multi": 0
     },
     "contenidos": {
       "comercial": 0,
       "contenidos": 6,
       "administrativo": 0,
       "proyectos": 0,
-      "aclaracion": 1
+      "aclaracion": 1,
+      "multi": 0
     },
     "administrativo": {
       "comercial": 0,
       "contenidos": 0,
       "administrativo": 10,
       "proyectos": 0,
-      "aclaracion": 1
+      "aclaracion": 1,
+      "multi": 0
     },
     "proyectos": {
       "comercial": 0,
       "contenidos": 0,
       "administrativo": 0,
       "proyectos": 8,
-      "aclaracion": 0
+      "aclaracion": 0,
+      "multi": 0
     },
     "aclaracion": {
       "comercial": 0,
       "contenidos": 0,
       "administrativo": 0,
       "proyectos": 0,
-      "aclaracion": 3
+      "aclaracion": 3,
+      "multi": 0
+    },
+    "multi": {
+      "comercial": 0,
+      "contenidos": 0,
+      "administrativo": 0,
+      "proyectos": 0,
+      "aclaracion": 0,
+      "multi": 4
     }
   },
   "latencia_ms": {
-    "p50": 0.35,
-    "p95": 0.41,
-    "media": 0.34
+    "p50": 0.21,
+    "p95": 0.83,
+    "media": 0.32
   },
   "tokens": {
     "in": 0,
@@ -97,7 +117,10 @@
       "justificacion": "señales comercial=3",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.63,
+      "delegados": [
+        "comercial"
+      ],
+      "latencia_ms": 0.4,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -113,7 +136,10 @@
       "justificacion": "señales comercial=2.5",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.35,
+      "delegados": [
+        "comercial"
+      ],
+      "latencia_ms": 0.21,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -129,7 +155,10 @@
       "justificacion": "señales comercial=2.5",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.41,
+      "delegados": [
+        "comercial"
+      ],
+      "latencia_ms": 0.28,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -145,7 +174,10 @@
       "justificacion": "señales comercial=4.5",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.41,
+      "delegados": [
+        "comercial"
+      ],
+      "latencia_ms": 0.68,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -161,7 +193,10 @@
       "justificacion": "señales comercial=2.5",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.35,
+      "delegados": [
+        "comercial"
+      ],
+      "latencia_ms": 0.24,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -177,7 +212,10 @@
       "justificacion": "señales comercial=2.5 vs proyectos=1",
       "metodo": "reglas",
       "resultado": "aclaracion",
-      "latencia_ms": 0.38,
+      "delegados": [
+        "comercial"
+      ],
+      "latencia_ms": 0.22,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -194,7 +232,10 @@
       "justificacion": "señales comercial=2",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.35,
+      "delegados": [
+        "comercial"
+      ],
+      "latencia_ms": 0.21,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -210,7 +251,10 @@
       "justificacion": "señales contenidos=2.5",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.37,
+      "delegados": [
+        "contenidos"
+      ],
+      "latencia_ms": 0.2,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -226,7 +270,10 @@
       "justificacion": "señales contenidos=2.5",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.38,
+      "delegados": [
+        "contenidos"
+      ],
+      "latencia_ms": 0.2,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -242,7 +289,10 @@
       "justificacion": "señales contenidos=4.5",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.34,
+      "delegados": [
+        "contenidos"
+      ],
+      "latencia_ms": 0.23,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -258,7 +308,10 @@
       "justificacion": "señales contenidos=2.5",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.35,
+      "delegados": [
+        "contenidos"
+      ],
+      "latencia_ms": 0.2,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -274,7 +327,10 @@
       "justificacion": "señales contenidos=2.5",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.37,
+      "delegados": [
+        "contenidos"
+      ],
+      "latencia_ms": 0.2,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -291,7 +347,10 @@
       "justificacion": "señales proyectos=1",
       "metodo": "reglas",
       "resultado": "aclaracion",
-      "latencia_ms": 0.39,
+      "delegados": [
+        "proyectos"
+      ],
+      "latencia_ms": 0.2,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -308,7 +367,10 @@
       "justificacion": "señales contenidos=5",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.38,
+      "delegados": [
+        "contenidos"
+      ],
+      "latencia_ms": 0.63,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -324,7 +386,10 @@
       "justificacion": "señales administrativo=2.5",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.34,
+      "delegados": [
+        "administrativo"
+      ],
+      "latencia_ms": 0.19,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -340,7 +405,10 @@
       "justificacion": "señales administrativo=4.5",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.35,
+      "delegados": [
+        "administrativo"
+      ],
+      "latencia_ms": 0.19,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -356,7 +424,10 @@
       "justificacion": "señales administrativo=5",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.37,
+      "delegados": [
+        "administrativo"
+      ],
+      "latencia_ms": 0.19,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -372,7 +443,10 @@
       "justificacion": "señales administrativo=2",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.34,
+      "delegados": [
+        "administrativo"
+      ],
+      "latencia_ms": 0.24,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -388,7 +462,10 @@
       "justificacion": "señales administrativo=3 vs proyectos=1",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.3,
+      "delegados": [
+        "administrativo"
+      ],
+      "latencia_ms": 0.66,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -404,7 +481,10 @@
       "justificacion": "señales administrativo=2.5",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.22,
+      "delegados": [
+        "administrativo"
+      ],
+      "latencia_ms": 0.24,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -420,7 +500,10 @@
       "justificacion": "señales administrativo=4",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.23,
+      "delegados": [
+        "administrativo"
+      ],
+      "latencia_ms": 0.2,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -437,7 +520,10 @@
       "justificacion": "señales administrativo=2 vs proyectos=0.5",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.19,
+      "delegados": [
+        "administrativo"
+      ],
+      "latencia_ms": 0.2,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -454,7 +540,10 @@
       "justificacion": "señales administrativo=4.5",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.22,
+      "delegados": [
+        "administrativo"
+      ],
+      "latencia_ms": 0.21,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -471,6 +560,9 @@
       "justificacion": "señales administrativo=2.5 vs proyectos=1",
       "metodo": "reglas",
       "resultado": "aclaracion",
+      "delegados": [
+        "administrativo"
+      ],
       "latencia_ms": 0.2,
       "tokens_in": 0,
       "tokens_out": 0,
@@ -488,6 +580,9 @@
       "justificacion": "señales administrativo=3 vs proyectos=1",
       "metodo": "reglas",
       "resultado": "correcto",
+      "delegados": [
+        "administrativo"
+      ],
       "latencia_ms": 0.23,
       "tokens_in": 0,
       "tokens_out": 0,
@@ -504,7 +599,10 @@
       "justificacion": "señales proyectos=2.5",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.19,
+      "delegados": [
+        "proyectos"
+      ],
+      "latencia_ms": 0.2,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -520,7 +618,10 @@
       "justificacion": "señales proyectos=2.5",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.4,
+      "delegados": [
+        "proyectos"
+      ],
+      "latencia_ms": 0.2,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -536,7 +637,10 @@
       "justificacion": "señales proyectos=2",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.39,
+      "delegados": [
+        "proyectos"
+      ],
+      "latencia_ms": 0.62,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -552,7 +656,10 @@
       "justificacion": "señales proyectos=4.5",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.37,
+      "delegados": [
+        "proyectos"
+      ],
+      "latencia_ms": 0.21,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -568,7 +675,10 @@
       "justificacion": "señales proyectos=3.5",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.36,
+      "delegados": [
+        "proyectos"
+      ],
+      "latencia_ms": 0.2,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -585,7 +695,10 @@
       "justificacion": "señales proyectos=1.5",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.38,
+      "delegados": [
+        "proyectos"
+      ],
+      "latencia_ms": 0.2,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -602,7 +715,10 @@
       "justificacion": "señales proyectos=5.5",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.36,
+      "delegados": [
+        "proyectos"
+      ],
+      "latencia_ms": 0.24,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -619,7 +735,10 @@
       "justificacion": "señales proyectos=4",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.35,
+      "delegados": [
+        "proyectos"
+      ],
+      "latencia_ms": 0.21,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -636,7 +755,10 @@
       "justificacion": "señales proyectos=0.5",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.36,
+      "delegados": [
+        "proyectos"
+      ],
+      "latencia_ms": 0.23,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -653,7 +775,10 @@
       "justificacion": "Sin señales de ningún dominio.",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.33,
+      "delegados": [
+        "comercial"
+      ],
+      "latencia_ms": 0.19,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
@@ -670,7 +795,108 @@
       "justificacion": "Sin señales de ningún dominio.",
       "metodo": "reglas",
       "resultado": "correcto",
-      "latencia_ms": 0.31,
+      "delegados": [
+        "comercial"
+      ],
+      "latencia_ms": 0.19,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "costo_usd": 0.0
+    },
+    {
+      "id": "R37",
+      "texto": "Facturale el saldo a Martín Gómez y avisale que se atrasan los muebles de cocina",
+      "esperado": "multi",
+      "agentes_esperados": [
+        "administrativo",
+        "proyectos"
+      ],
+      "limitrofe": true,
+      "nota": "plata + tiempo en el mismo pedido",
+      "predicho": "multi",
+      "agente_router": "administrativo",
+      "confianza": 0.714,
+      "justificacion": "varias tareas: administrativo + proyectos",
+      "metodo": "reglas",
+      "resultado": "correcto",
+      "delegados": [
+        "administrativo",
+        "proyectos"
+      ],
+      "latencia_ms": 0.9,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "costo_usd": 0.0
+    },
+    {
+      "id": "R38",
+      "texto": "¿Qué entregas tengo esta semana? Y además decime quién me debe plata",
+      "esperado": "multi",
+      "agentes_esperados": [
+        "proyectos",
+        "administrativo"
+      ],
+      "limitrofe": false,
+      "predicho": "multi",
+      "agente_router": "proyectos",
+      "confianza": 0.758,
+      "justificacion": "varias tareas: proyectos + administrativo",
+      "metodo": "reglas",
+      "resultado": "correcto",
+      "delegados": [
+        "administrativo",
+        "proyectos"
+      ],
+      "latencia_ms": 0.83,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "costo_usd": 0.0
+    },
+    {
+      "id": "R39",
+      "texto": "Armame el calendario de posts de diciembre y haceme el seguimiento de los leads que no contestaron",
+      "esperado": "multi",
+      "agentes_esperados": [
+        "contenidos",
+        "comercial"
+      ],
+      "limitrofe": false,
+      "predicho": "multi",
+      "agente_router": "contenidos",
+      "confianza": 0.758,
+      "justificacion": "varias tareas: contenidos + comercial",
+      "metodo": "reglas",
+      "resultado": "correcto",
+      "delegados": [
+        "comercial",
+        "contenidos"
+      ],
+      "latencia_ms": 0.82,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "costo_usd": 0.0
+    },
+    {
+      "id": "R40",
+      "texto": "Marcá como cumplida la planta de equipamiento de Valentina y facturale el saldo",
+      "esperado": "multi",
+      "agentes_esperados": [
+        "proyectos",
+        "administrativo"
+      ],
+      "limitrofe": true,
+      "nota": "cierre de entregable dispara cobro",
+      "predicho": "multi",
+      "agente_router": "proyectos",
+      "confianza": 0.849,
+      "justificacion": "varias tareas: proyectos + administrativo",
+      "metodo": "reglas",
+      "resultado": "correcto",
+      "delegados": [
+        "administrativo",
+        "proyectos"
+      ],
+      "latencia_ms": 0.86,
       "tokens_in": 0,
       "tokens_out": 0,
       "costo_usd": 0.0
