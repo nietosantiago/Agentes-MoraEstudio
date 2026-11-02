@@ -1,0 +1,4 @@
+[
+  {"id": "EV-01", "fecha": "2026-11-04", "hora": "10:00", "titulo": "Visita de obra Casa Gómez", "obra_id": "OBR-02", "invitado": "martin.gomez@example.com", "origen": "seed"},
+  {"id": "EV-02", "fecha": "2026-11-06", "hora": "17:00", "titulo": "Presentación planta de equipamiento a Valentina", "obra_id": "OBR-01", "invitado": "valentina.sosa@example.com", "origen": "seed"}
+]

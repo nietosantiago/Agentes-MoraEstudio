@@ -1,0 +1,5 @@
+[
+  {"id": "OBR-01", "cliente_id": "CLI-01", "nombre": "Departamento Bv. Gálvez — living y cocina", "direccion": "Bv. Gálvez 1500, Santa Fe", "etapa": "diseno", "inicio": "2026-10-01", "entrega_prevista": "2026-12-04", "publicable": 0, "notas": "Clienta prefiere tonos tierra y madera clara."},
+  {"id": "OBR-02", "cliente_id": "CLI-02", "nombre": "Casa Gómez — Santo Tomé", "direccion": "Santo Tomé, Santa Fe", "etapa": "ejecucion", "inicio": "2026-09-10", "entrega_prevista": "2026-12-10", "publicable": 1, "notas": "Cocina a medida con Carpintería Litoral."},
+  {"id": "OBR-03", "cliente_id": "CLI-03", "nombre": "Oficinas Estudio Ríos", "direccion": "San Martín 2300, Santa Fe", "etapa": "finalizada", "inicio": "2026-06-01", "entrega_prevista": "2026-09-30", "publicable": 1, "notas": "Fotos profesionales disponibles."}
+]

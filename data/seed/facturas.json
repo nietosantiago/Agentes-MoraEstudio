@@ -1,0 +1,6 @@
+[
+  {"numero": "C-0001-00000010", "cliente_id": "CLI-02", "fecha": "2026-09-15", "concepto": "Seña 50% presupuesto PRE-2026-031", "monto": 1340000, "tipo": "C", "cae": "SEED", "proveedor": "seed", "presupuesto_id": "PRE-2026-031"},
+  {"numero": "C-0001-00000011", "cliente_id": "CLI-01", "fecha": "2026-10-08", "concepto": "Seña 50% presupuesto PRE-2026-036", "monto": 425000, "tipo": "C", "cae": "SEED", "proveedor": "seed", "presupuesto_id": "PRE-2026-036"},
+  {"numero": "C-0001-00000012", "cliente_id": "CLI-03", "fecha": "2026-10-05", "concepto": "Saldo proyecto oficinas", "monto": 450000, "tipo": "C", "cae": "SEED", "proveedor": "seed", "presupuesto_id": null},
+  {"numero": "C-0001-00000013", "cliente_id": "CLI-02", "fecha": "2026-10-20", "concepto": "Seguimiento de obra octubre", "monto": 250000, "tipo": "C", "cae": "SEED", "proveedor": "seed", "presupuesto_id": "PRE-2026-031"}
+]
