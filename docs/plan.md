@@ -34,3 +34,22 @@ Como el código va adelantado, conviene usar el margen en lo que pesa en la nota
 3. Probar los 4 agentes con Gemini sobre los pedidos reales y ajustar los prompts de frontera.
 4. Elegir la API de facturación e implementar `FacturacionProvider` en homologación.
 5. Probar `docker compose up` en una máquina con Docker y desplegar Postgres en Supabase.
+
+## Checklist según las instrucciones oficiales de entrega (ITBA)
+> El PDF de instrucciones dice 8/11/2026, pero la fecha se **modificó al 16/12/2026**. Guardar la comunicación oficial del cambio.
+
+| Requisito de las instrucciones | Estado | Acción |
+|---|---|---|
+| 1. Capacidad agéntica: "debe existir una decisión del agente" | 🟡 | En modo local las decisiones son reglas. **Probar y demostrar en modo Gemini** (router + loop de tools) |
+| 2. Skill reutilizable | ✅ | Reemplazar los valores provisorios por el material real |
+| 3. Estado y memoria | ✅ | — |
+| 4. HITL (aprobar / modificar / rechazar) | ✅ | — |
+| 5. Integración externa "con valor real" | 🟡 | Gemini + Postgres. Sumar Supabase hosteado y/o una API de facturación en homologación |
+| 6. Interfaz accesible | ✅ | — |
+| 7. Ejecución reproducible | 🟡 | Procedimiento venv verificado en Windows. **Probar `docker compose`** |
+| 8. Evidencia de calidad | 🟡 | Evaluar con Gemini vs. reglas sobre un **dataset real** |
+| Arquitectura B: "consolidación de resultados" | 🟡 | El router delega a un solo agente. **Decidir**: consolidación multi-intención (recomendado) o justificación escrita |
+| Repositorio accesible + tag `v1.0-tfi` | ❌ | Arreglar el acceso a GitHub; el tag se crea al final |
+| README con las 13 secciones | 🟡 | Faltan Integrantes, Problema, Usuario, diagrama en el README, resultados de evaluación, Limitaciones y justificación del modelo |
+| Video de 3–5 min (recomendado) | ❌ | Problema → decisión agéntica → tool → HITL → resultado |
+| Formulario: nombre, integrantes, URLs, descripción (≤5 líneas) | ❌ | Al final |
