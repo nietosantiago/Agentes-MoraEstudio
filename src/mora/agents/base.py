@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -27,14 +27,14 @@ MAX_PASOS = 5
 
 @dataclass
 class EntradaAgente:
-    texto: str
+    texto: str                       # el (sub)pedido que le toca a este agente
     turno: int
     thread_id: str
     cliente: dict | None = None
     correccion: str = ""
     accion_previa: AccionPendiente | None = None
-    cambios: dict[str, dict[str, Any]] = field(default_factory=dict)
     historial: list[str] = field(default_factory=list)
+    contexto: str = ""               # pedido completo (si hubo varios subpedidos), para resolver referencias
 
 
 class OperacionLLM(BaseModel):
@@ -75,10 +75,7 @@ class AgenteBase:
             return {"error": msg}
 
     def proponer(self, e: EntradaAgente, resumen: str, ops: list[Operacion], justificacion: str = "") -> AccionPendiente:
-        for idx, cambios in (e.cambios or {}).items():  # modificación estructurada de la diseñadora
-            i = int(idx)
-            if 0 <= i < len(ops):
-                ops[i] = ops[i].model_copy(update={"args": {**ops[i].args, **cambios}})
+        ops = [o.model_copy(update={"agente": self.nombre}) for o in ops]
         riesgo, externo = self.deps.policy.clasificar(self.nombre, ops)  # riesgo lo define el registry, no el LLM
         return AccionPendiente(accion_id=f"t{e.turno}-{self.nombre}", agente=self.nombre, resumen=resumen,
                                justificacion=justificacion, operaciones=ops, riesgo=riesgo, efecto_externo=externo,
@@ -89,11 +86,14 @@ class AgenteBase:
                                errores=self.errores)
 
     def cliente_en_texto(self, e: EntradaAgente) -> dict | None:
-        t = norm(e.texto)
-        for c in self.deps.db.query("SELECT * FROM clientes"):
-            partes = [p for p in norm(c["nombre"]).split() if len(p) > 3 and p not in ("estudio", "contable")]
-            if any(f" {p} " in t for p in partes):
-                return c
+        """Busca el cliente en el subpedido y, si no está, en el pedido completo ('avisale' -> ¿a quién?)."""
+        clientes = self.deps.db.query("SELECT * FROM clientes")
+        for texto in (e.texto, e.contexto):
+            t = norm(texto)
+            for c in clientes:
+                partes = [p for p in norm(c["nombre"]).split() if len(p) > 3 and p not in ("estudio", "contable")]
+                if any(f" {p} " in t for p in partes):
+                    return c
         return e.cliente
 
     def marca_breve(self) -> str:
@@ -135,7 +135,7 @@ class AgenteBase:
     def _loop_llm(self, e: EntradaAgente) -> ResultadoAgente:
         system = self._system()
         obs: list[dict] = []
-        contexto = {"pedido": e.texto, "cliente_activo": e.cliente, "hoy": self.deps.settings.hoy.isoformat(),
+        contexto = {"pedido": e.texto, "pedido_completo": e.contexto or e.texto, "cliente_activo": e.cliente, "hoy": self.deps.settings.hoy.isoformat(),
                     "historial_reciente": e.historial[-4:]}
         if e.correccion or e.accion_previa:
             contexto["correccion_de_la_disenadora"] = e.correccion

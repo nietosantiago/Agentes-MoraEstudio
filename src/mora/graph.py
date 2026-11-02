@@ -3,12 +3,14 @@
             carga_contexto  (marca + cliente)
                   ↓
                router  ── confianza < umbral ──► aclaracion (interrupt: la diseñadora elige)
+                  │  delegación: Send por subpedido (1 a 3 agentes, en paralelo)
      ┌──────────┬─┴────────┬──────────┐                │
  comercial  contenidos  administrativo  proyectos ◄────┘
      └──────────┴─┬────────┴──────────┘
+             consolidador  (una respuesta + una acción; duplicados, conflictos plata×tiempo)
         ¿acción con efecto? ── no ──► END (respuesta informativa)
                   ↓ sí
-            revision (interrupt)  ── modificado ──► vuelve al agente (único ciclo)
+            revision (interrupt)  ── modificado ──► vuelve a los agentes (único ciclo)
                   │                ── rechazado ──► END
                   ↓ aprobado
                ejecutor (policy + idempotencia) ──► END
@@ -29,17 +31,25 @@ from typing import Annotated
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
-from langgraph.types import interrupt
+from langgraph.types import Send, interrupt
 from pydantic import ValidationError
 from typing_extensions import TypedDict
 
 from .agents.base import EntradaAgente
 from .agents.registro import AGENTES_CLASES
 from .agents.router import pregunta_aclaracion, rutear
-from .contracts import AGENTES, AccionPendiente, DecisionHumana, DecisionRouter, ResultadoOperacion
+from .consolidacion import consolidar
+from .contracts import AGENTES, AccionPendiente, DecisionHumana, DecisionRouter, ResultadoAgente, ResultadoOperacion
 from .deps import Deps
 from .tools import PolicyError
 from .tracing import traced
+
+
+def acumular_resultados(actual: list | None, nuevo: list | None) -> list:
+    """Reducer para el fan-in de agentes en paralelo. `None` reinicia la lista (nueva ronda)."""
+    if nuevo is None:
+        return []
+    return (actual or []) + nuevo
 
 
 class EstadoEstudio(TypedDict, total=False):
@@ -55,6 +65,9 @@ class EstadoEstudio(TypedDict, total=False):
     correccion: str | None
     cambios: dict | None
     resultado_ejecucion: list[dict]
+    tareas: list[dict]                # delegación: [{"agente", "pedido"}] (1 a 3)
+    ronda: int                        # cada (re)despacho a los agentes es una ronda
+    resultados_agentes: Annotated[list[dict], acumular_resultados]
     turno: int
     estado: str                       # informativo | esperando_aclaracion | esperando_aprobacion | ejecutado | rechazado
     trazas: Annotated[list[dict], operator.add]  # tokens, costo y latencia por nodo
@@ -74,20 +87,34 @@ def build_graph(deps: Deps, checkpointer=None):
     def carga_contexto(state: EstadoEstudio):
         turno = sum(1 for m in state.get("messages", []) if isinstance(m, HumanMessage))
         return {"turno": turno, "accion_pendiente": None, "decision_humana": None, "correccion": None,
-                "cambios": None, "resultado_ejecucion": [], "estado": "en_curso",
+                "cambios": None, "resultado_ejecucion": [], "estado": "en_curso", "resultados_agentes": None,
+                "tareas": [], "ronda": 0,
                 "_traza_extra": {"marca": f"{deps.marca.name}@{deps.marca.version}",
                                  "cliente": state.get("cliente_activo")}}
 
     @traced("router", s)
     def router(state: EstadoEstudio):
-        d = rutear(_ultimo_humano(state), deps.llm)
+        texto = _ultimo_humano(state)
+        d = rutear(texto, deps.llm, s.umbral_router)
+        tareas = ([{"agente": x.agente, "pedido": x.pedido} for x in d.subpedidos] if d.es_multiple
+                  else [{"agente": d.agente, "pedido": texto}])
         return {"agente_destino": d.agente, "confianza_router": d.confianza, "justificacion_router": d.justificacion,
-                "metodo_router": d.metodo,
+                "metodo_router": d.metodo, "tareas": tareas, "ronda": 1,
                 "_traza_extra": {"agente": d.agente, "confianza": d.confianza, "metodo": d.metodo,
-                                 "justificacion": d.justificacion}}
+                                 "justificacion": d.justificacion, "delegacion": [t["agente"] for t in tareas]}}
 
-    def salida_router(state: EstadoEstudio) -> str:
-        return state["agente_destino"] if state["confianza_router"] >= s.umbral_router else "aclaracion"
+    def despachar(state: EstadoEstudio) -> list[Send]:
+        """Delegación: un Send por subpedido. Cada agente recibe solo lo que necesita."""
+        base = {k: state.get(k) for k in ("messages", "thread_id", "cliente_activo", "turno", "accion_pendiente",
+                                          "correccion", "ronda")}
+        completo = _ultimo_humano(state)
+        return [Send(t["agente"], {**base, "tarea": {**t, "indice": i, "contexto": completo}})
+                for i, t in enumerate(state["tareas"])]
+
+    def salida_router(state: EstadoEstudio):
+        if state["confianza_router"] < s.umbral_router:
+            return "aclaracion"
+        return despachar(state)
 
     def aclaracion(state: EstadoEstudio):
         """Pregunta en vez de adivinar. Sin efectos (se re-ejecuta al reanudar)."""
@@ -98,34 +125,52 @@ def build_graph(deps: Deps, checkpointer=None):
         if agente not in AGENTES:
             return {"estado": "informativo", "messages": [AIMessage("No derivé el pedido. Reformulalo cuando quieras.")]}
         return {"agente_destino": agente, "confianza_router": 1.0, "metodo_router": "humano",
-                "justificacion_router": "elegido por la diseñadora"}
+                "justificacion_router": "elegido por la diseñadora", "ronda": 1,
+                "tareas": [{"agente": agente, "pedido": _ultimo_humano(state)}]}
 
-    def salida_aclaracion(state: EstadoEstudio) -> str:
-        return state["agente_destino"] if state.get("metodo_router") == "humano" else END
+    def salida_aclaracion(state: EstadoEstudio):
+        return despachar(state) if state.get("metodo_router") == "humano" else END
 
     def make_agente(nombre: str):
         @traced(nombre, s)
-        def nodo(state: EstadoEstudio):
+        def nodo(state: dict):
+            tarea = state.get("tarea") or {"pedido": _ultimo_humano(state), "indice": 0, "contexto": ""}
             previa = AccionPendiente.model_validate(state["accion_pendiente"]) if state.get("accion_pendiente") else None
-            texto = _ultimo_humano(state)
+            texto = tarea["pedido"]
             if state.get("correccion"):
                 texto = f"{state['correccion']} || {texto}"  # la corrección tiene prioridad al extraer datos
             cliente = deps.db.one("SELECT * FROM clientes WHERE id=?", (state["cliente_activo"],)) \
                 if state.get("cliente_activo") else None
             e = EntradaAgente(texto=texto, turno=state.get("turno", 0), thread_id=state.get("thread_id", ""),
                               cliente=cliente, correccion=state.get("correccion") or "", accion_previa=previa,
-                              cambios=state.get("cambios") or {},
-                              historial=[str(m.content) for m in state.get("messages", [])[-6:]])
-            r = AGENTES_CLASES[nombre](deps).ejecutar(e)
-            return {"accion_pendiente": r.accion.model_dump(mode="json") if r.accion else None,
-                    "estado": "esperando_aprobacion" if r.accion else "informativo",
-                    "correccion": None, "cambios": None,
-                    "messages": [AIMessage(r.respuesta, name=nombre)],
+                              historial=[str(m.content) for m in state.get("messages", [])[-6:]],
+                              contexto=tarea.get("contexto") or "")
+            try:
+                r = AGENTES_CLASES[nombre](deps).ejecutar(e)
+            except Exception as exc:  # falla parcial: el resto de los agentes sigue y el consolidador la muestra
+                r = ResultadoAgente(respuesta="No pude completar esta parte del pedido.",
+                                    errores=[f"{type(exc).__name__}: {str(exc)[:120]}"])
+            return {"resultados_agentes": [{"ronda": state.get("ronda", 1), "indice": tarea["indice"],
+                                            "agente": nombre, "resultado": r.model_dump(mode="json")}],
                     "_traza_extra": {"tools": r.tools_usadas, "errores": r.errores, "modo": r.modo,
-                                     "propone_accion": bool(r.accion)}}
+                                     "propone_accion": bool(r.accion), "subpedido": tarea["pedido"][:120]}}
         return nodo
 
-    def salida_agente(state: EstadoEstudio) -> str:
+    @traced("consolidador", s)
+    def consolidador(state: EstadoEstudio):
+        ronda = state.get("ronda", 1)
+        res = sorted((x for x in state.get("resultados_agentes", []) if x["ronda"] == ronda), key=lambda x: x["indice"])
+        pares = [(x["agente"], ResultadoAgente.model_validate(x["resultado"])) for x in res]
+        previa = state.get("accion_pendiente")
+        version = (previa or {}).get("version", 0) + 1 if state.get("decision_humana") == "modificado" else 1
+        respuesta, accion, meta = consolidar(pares, turno=state.get("turno", 0), version=version, db=deps.db,
+                                             cambios=state.get("cambios"))
+        autor = pares[0][0] if len(pares) == 1 else "consolidador"
+        return {"accion_pendiente": accion.model_dump(mode="json") if accion else None,
+                "estado": "esperando_aprobacion" if accion else "informativo", "correccion": None, "cambios": None,
+                "messages": [AIMessage(respuesta, name=autor)], "_traza_extra": meta}
+
+    def salida_consolidador(state: EstadoEstudio) -> str:
         return "revision" if state.get("accion_pendiente") else END
 
     def revision(state: EstadoEstudio):
@@ -143,15 +188,16 @@ def build_graph(deps: Deps, checkpointer=None):
             return {"decision_humana": "rechazado", "estado": "rechazado", "accion_pendiente": None,
                     "messages": [AIMessage(f"Listo, descarté: {accion.resumen}." + (f" ({d.comentario})" if d.comentario else ""))]}
         if d.decision == "modificado":
-            return {"decision_humana": "modificado", "correccion": d.correccion or d.comentario, "cambios": d.cambios}
+            return {"decision_humana": "modificado", "correccion": d.correccion or d.comentario, "cambios": d.cambios,
+                    "ronda": state.get("ronda", 1) + 1, "resultados_agentes": None}
         return {"decision_humana": "aprobado"}
 
-    def salida_revision(state: EstadoEstudio) -> str:
+    def salida_revision(state: EstadoEstudio):
         d = state.get("decision_humana")
         if d == "aprobado":
             return "ejecutor"
         if d == "modificado":
-            return state["agente_destino"]  # único ciclo del grafo
+            return despachar(state)  # único ciclo del grafo: vuelven los mismos agentes con la corrección
         if d == "rechazado":
             return END
         return "revision"  # inválida o desactualizada: se vuelve a pedir
@@ -204,6 +250,7 @@ def build_graph(deps: Deps, checkpointer=None):
     g.add_node("aclaracion", aclaracion)
     for a in AGENTES:
         g.add_node(a, make_agente(a))
+    g.add_node("consolidador", consolidador)
     g.add_node("revision", revision)
     g.add_node("ejecutor", ejecutor)
 
@@ -212,7 +259,8 @@ def build_graph(deps: Deps, checkpointer=None):
     g.add_conditional_edges("router", salida_router, [*AGENTES, "aclaracion"])          # arista 1
     g.add_conditional_edges("aclaracion", salida_aclaracion, [*AGENTES, END])
     for a in AGENTES:
-        g.add_conditional_edges(a, salida_agente, ["revision", END])                     # arista 2
+        g.add_edge(a, "consolidador")                                                   # fan-in
+    g.add_conditional_edges("consolidador", salida_consolidador, ["revision", END])      # arista 2
     g.add_conditional_edges("revision", salida_revision, ["ejecutor", "revision", END, *AGENTES])  # arista 3
     g.add_edge("ejecutor", END)
     return g.compile(checkpointer=checkpointer)
